@@ -413,3 +413,94 @@ def test_excluded_tenders_not_upserted(tmp_path):
 
     assert result == 0
     mock_upsert.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# no_category stats counter
+# ---------------------------------------------------------------------------
+
+
+def test_no_category_counter_increments(tmp_path, capsys):
+    """Tenders that match no category must increment stats['no_category']
+    and their title must appear in the stderr summary examples."""
+    from src.models import Tender as TenderSchema
+
+    # One tender with no category match, one with a match
+    no_cat_tender = TenderSchema(
+        source="mext",
+        title="庁舎什器の調達",
+        url="https://www.mext.go.jp/test/nocat",
+    )
+    cat_tender = TenderSchema(
+        source="jst",
+        title="廃炉技術の研究開発",
+        url="https://choutatsu.jst.go.jp/test/cat",
+    )
+
+    mock_row = _make_ns(id=1, url=cat_tender.url)
+
+    def mock_classify(title, description, keywords):
+        # Return empty dict for the no-category tender
+        if "庁舎" in title:
+            return {}
+        return {"原子力": ["廃炉・廃棄物"]}
+
+    with patch("src.main.jst_fetch", return_value=[no_cat_tender, cat_tender]), \
+         patch("src.main.mext_fetch", return_value=[]), \
+         patch("src.main.nedo_fetch", return_value=[]), \
+         patch("src.main.jgrants_fetch", return_value=[]), \
+         patch("src.main.load_keywords",
+               return_value={"原子力": {"廃炉・廃棄物": ["廃炉"]}, "exclude": []}), \
+         patch("src.main.is_excluded", return_value=False), \
+         patch("src.main.classify", side_effect=mock_classify), \
+         patch("src.main.upsert_tender", return_value=mock_row), \
+         patch("src.main.build_site"), \
+         patch("src.main.PUBLIC_DIR", tmp_path / "public"), \
+         patch("src.classifier.classify_tender"):
+
+        sys.argv = ["main", "--skip-ai"]
+        from src.main import main
+        result = main()
+
+    assert result == 0
+    captured = capsys.readouterr()
+    # Stats output goes to stderr
+    assert "カテゴリなし:     1" in captured.err
+    # The title example should appear in stderr output
+    assert "庁舎什器" in captured.err
+
+
+def test_no_category_counter_zero_when_all_match(tmp_path, capsys):
+    """When every tender matches a category, no_category should be 0
+    and the examples block must not appear."""
+    from src.models import Tender as TenderSchema
+
+    tender = TenderSchema(
+        source="jst",
+        title="廃炉技術の研究開発",
+        url="https://choutatsu.jst.go.jp/test/all-match",
+    )
+    mock_row = _make_ns(id=1, url=tender.url)
+
+    with patch("src.main.jst_fetch", return_value=[tender]), \
+         patch("src.main.mext_fetch", return_value=[]), \
+         patch("src.main.nedo_fetch", return_value=[]), \
+         patch("src.main.jgrants_fetch", return_value=[]), \
+         patch("src.main.load_keywords",
+               return_value={"原子力": {"廃炉・廃棄物": ["廃炉"]}, "exclude": []}), \
+         patch("src.main.is_excluded", return_value=False), \
+         patch("src.main.classify", return_value={"原子力": ["廃炉・廃棄物"]}), \
+         patch("src.main.upsert_tender", return_value=mock_row), \
+         patch("src.main.build_site"), \
+         patch("src.main.PUBLIC_DIR", tmp_path / "public"), \
+         patch("src.classifier.classify_tender"):
+
+        sys.argv = ["main", "--skip-ai"]
+        from src.main import main
+        result = main()
+
+    assert result == 0
+    captured = capsys.readouterr()
+    assert "カテゴリなし:     0" in captured.err
+    # No examples block should appear
+    assert "例:" not in captured.err

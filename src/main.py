@@ -125,6 +125,7 @@ def main() -> int:
         "ai_skipped": 0,
         "failed": 0,
     }
+    no_category_examples: list[str] = []
 
     if not args.rebuild_site_only:
         # --------------------------------------------------------------
@@ -186,6 +187,12 @@ def main() -> int:
                 # カテゴリ判定
                 categories = classify(tender.title, tender.description, keywords)
                 if not categories:
+                    logger.debug(
+                        "skip (no category match): source=%s title=%s",
+                        tender.source,
+                        tender.title[:100],
+                    )
+                    no_category_examples.append(tender.title)
                     stats["no_category"] += 1
                     continue
 
@@ -218,16 +225,20 @@ def main() -> int:
     # ------------------------------------------------------------------
     # 4. stats 出力
     # ------------------------------------------------------------------
-    print("\n=== koubo-watch 実行結果 ===")
+    print("\n=== koubo-watch 実行結果 ===", file=sys.stderr)
     if not args.rebuild_site_only:
-        print(f"  取得:            {stats['fetched']}")
-        print(f"  除外フィルタ:     {stats['excluded']}")
-        print(f"  カテゴリなし:     {stats['no_category']}")
-        print(f"  DB 投入:         {stats['upserted']}")
-        print(f"  AI 判定:         {stats['ai_classified']}")
-        print(f"  AI スキップ:      {stats['ai_skipped']}")
-        print(f"  失敗:            {stats['failed']}")
-    print(f"  サイト出力先:     {PUBLIC_DIR}")
+        print(f"  取得:            {stats['fetched']}", file=sys.stderr)
+        print(f"  除外フィルタ:     {stats['excluded']}", file=sys.stderr)
+        print(f"  カテゴリなし:     {stats['no_category']}", file=sys.stderr)
+        if no_category_examples:
+            print("    例:", file=sys.stderr)
+            for t in no_category_examples[:3]:
+                print(f"      - {t[:80]}", file=sys.stderr)
+        print(f"  DB 投入:         {stats['upserted']}", file=sys.stderr)
+        print(f"  AI 判定:         {stats['ai_classified']}", file=sys.stderr)
+        print(f"  AI スキップ:      {stats['ai_skipped']}", file=sys.stderr)
+        print(f"  失敗:            {stats['failed']}", file=sys.stderr)
+    print(f"  サイト出力先:     {PUBLIC_DIR}", file=sys.stderr)
 
     return 0 if stats.get("failed", 0) == 0 else 1
 

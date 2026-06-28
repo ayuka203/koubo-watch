@@ -118,8 +118,16 @@ def _parse_feed(xml_content: bytes | str) -> list[Tender]:
     """
     feed = feedparser.parse(xml_content)
     if feed.bozo:
+        sample: bytes = (
+            xml_content[:200]
+            if isinstance(xml_content, bytes)
+            else xml_content[:200].encode()
+        )
         logger.warning(
-            "%s: malformed feed (bozo=True): %s", __name__, feed.bozo_exception
+            "%s: malformed feed (bozo=True): %s; body sample=%r",
+            __name__,
+            feed.bozo_exception,
+            sample,
         )
     tenders: list[Tender] = []
 

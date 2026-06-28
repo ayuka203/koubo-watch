@@ -29,10 +29,10 @@ logger = logging.getLogger(__name__)
 
 ALLOWED_HOST = "www.mext.go.jp"
 ALLOWED_HOSTS: frozenset[str] = frozenset({ALLOWED_HOST})
-# Primary RSS URL — update to the live URL once confirmed
-RSS_URL = (
-    "https://www.mext.go.jp/b_menu/offer/index.xml"
-)
+# General news RSS (RDF/RSS 1.0).  Note: this feed contains all news, not
+# only public tenders — filter.py's classify() step is responsible for
+# discarding non-tender entries (e.g. keeping only titles with "公募"/"公示").
+RSS_URL = "https://www.mext.go.jp/b_menu/news/index.rdf"
 
 _TIMEOUT_SECONDS = 30.0
 _MAX_RETRIES = 3

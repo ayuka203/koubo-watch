@@ -134,6 +134,39 @@ def test_parse_feed_empty_xml():
     assert tenders == []
 
 
+# ---------------------------------------------------------------------------
+# bozo feed — body sample appears in warning log
+# ---------------------------------------------------------------------------
+
+
+def test_parse_feed_bozo_logs_body_sample_bytes(caplog):
+    """When bozo=True and input is bytes, the log message must include body sample."""
+    import logging
+
+    # Truncated XML triggers bozo (unclosed token)
+    malformed = b"<?xml version='1.0'?><rss version='2.0'><channel><broken"
+    with caplog.at_level(logging.WARNING, logger="src.fetchers.jst"):
+        _parse_feed(malformed)
+
+    bozo_records = [r for r in caplog.records if "bozo" in r.message.lower()]
+    assert bozo_records, "Expected a bozo warning log record"
+    assert "body sample" in bozo_records[0].message
+
+
+def test_parse_feed_bozo_logs_body_sample_str(caplog):
+    """When bozo=True and input is str, the log message must include body sample."""
+    import logging
+
+    # Truncated XML triggers bozo (unclosed token)
+    malformed_str = "<?xml version='1.0'?><rss version='2.0'><channel><broken"
+    with caplog.at_level(logging.WARNING, logger="src.fetchers.jst"):
+        _parse_feed(malformed_str)
+
+    bozo_records = [r for r in caplog.records if "bozo" in r.message.lower()]
+    assert bozo_records, "Expected a bozo warning log record"
+    assert "body sample" in bozo_records[0].message
+
+
 def test_parse_feed_missing_link_skipped():
     xml = """<?xml version="1.0" encoding="UTF-8"?>
     <rss version="2.0"><channel>

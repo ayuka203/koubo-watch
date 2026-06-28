@@ -3,6 +3,11 @@
 The public endpoint is documented at https://api.jgrants-portal.go.jp/
 No API key is required for public grant information.
 
+The /exp/v1/public/subsidies endpoint requires ``keyword``, ``sort``,
+``order``, and ``acceptance`` parameters for every request.  fetch_recent
+iterates over a configurable keyword list and unions the results, deduplicating
+by ``external_id``.
+
 SSRF protection: only the ALLOWED_HOST is contacted; scheme and port are
 validated; response-derived URLs are also validated before use.
 HTTP safety: 30 s timeout, 3 retries with exponential back-off,
@@ -32,12 +37,28 @@ logger = logging.getLogger(__name__)
 ALLOWED_HOST = "api.jgrants-portal.go.jp"
 BASE_URL = f"https://{ALLOWED_HOST}"
 
-# Assumed endpoint path — adjust once real API docs are confirmed
 _SUBSIDIES_PATH = "/exp/v1/public/subsidies"
 
 _TIMEOUT_SECONDS = 30.0
 _MAX_RETRIES = 3
 _RETRY_BACKOFF_BASE = 2.0  # seconds
+
+# Default keywords used when the caller does not supply a custom list.
+# Covers the main domains of interest (nuclear, grid, renewable energy, GX).
+_DEFAULT_KEYWORDS: list[str] = [
+    "原子力",
+    "放射線",
+    "送配電",
+    "電力",
+    "送電",
+    "配電",
+    "再エネ",
+    "蓄電",
+    "水素",
+    "エネルギー",
+    "脱炭素",
+    "GX",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -59,7 +80,9 @@ def _assert_allowed_url(url: str) -> None:
         raise ValueError(f"Non-default port rejected: {url}")
 
 
-def _get_with_retry(client: httpx.Client, url: str, params: dict) -> httpx.Response:
+def _get_with_retry(
+    client: httpx.Client, url: str, params: dict[str, Any]
+) -> httpx.Response:
     """GET *url* with retry logic.
 
     4xx — raise immediately (no retry).
@@ -165,34 +188,47 @@ def _item_to_tender(item: dict) -> Tender | None:
 def fetch_recent(
     since: date | None = None,
     limit: int = 100,
+    keywords: list[str] | None = None,
 ) -> list[Tender]:
     """Fetch recently posted subsidies from the J-Grants public API.
+
+    The /subsidies endpoint requires ``keyword``, ``sort``, ``order``, and
+    ``acceptance`` for every call.  This function iterates over *keywords*
+    (or _DEFAULT_KEYWORDS if None) and unions the results, deduplicating by
+    ``external_id``.
 
     Parameters
     ----------
     since:
         Only return records with ``acceptStartDate`` on or after this date.
-        If None, returns the most recent *limit* records.
+        If None, returns the most recent *limit* records (no date filter).
     limit:
-        Maximum total records to return (across all pages).
+        Maximum total records to return (across all keywords).
+    keywords:
+        List of keyword strings to query.  Defaults to _DEFAULT_KEYWORDS.
 
     Returns
     -------
     list[Tender]
-        Parsed and validated tender objects.
+        Deduplicated, parsed tender objects; at most *limit* entries.
     """
     if limit <= 0:
-        raise ValueError(f"limit must be a positive integer, got {limit}")
+        raise ValueError(f"limit must be > 0, got {limit}")
 
-    tenders: list[Tender] = []
-    page = 1
-    page_size = min(limit, 100)
+    queries = keywords if keywords is not None else _DEFAULT_KEYWORDS
+    per_keyword_limit = max(10, limit // max(1, len(queries)))
+
+    seen: set[str] = set()
+    results: list[Tender] = []
 
     with httpx.Client() as client:
-        while len(tenders) < limit:
+        for kw in queries:
             params: dict[str, Any] = {
-                "page": page,
-                "limit": page_size,
+                "keyword": kw,
+                "sort": "created_date",
+                "order": "DESC",
+                "acceptance": 1,  # 1 = 応募受付中のみ
+                "limit": per_keyword_limit,
             }
             if since is not None:
                 params["acceptStartDate"] = since.isoformat()
@@ -201,35 +237,22 @@ def fetch_recent(
             try:
                 resp = _get_with_retry(client, url, params)
             except Exception as exc:
-                logger.error("jgrants: fetch failed: %s", exc)
-                raise
+                logger.warning("jgrants: keyword=%s で取得失敗: %s", kw, exc)
+                continue
 
-            data = resp.json()
-
-            # Support both {"subsidies": [...]} and {"data": [...]} envelopes
-            items: list[dict] = (
-                data.get("subsidies")
-                or data.get("data")
-                or (data if isinstance(data, list) else [])
-            )
-
-            if not items:
-                break  # No more pages
+            body = resp.json()
+            items = body.get("result") or body.get("results") or body.get("subsidies") or body.get("data") or (body if isinstance(body, list) else [])
 
             for item in items:
                 tender = _item_to_tender(item)
-                if tender is not None:
-                    tenders.append(tender)
-                if len(tenders) >= limit:
-                    break
+                if tender is None:
+                    continue
+                key = tender.external_id or str(tender.url)
+                if key in seen:
+                    continue
+                seen.add(key)
+                results.append(tender)
+                if len(results) >= limit:
+                    return results
 
-            # Check for pagination continuation
-            total = data.get("total") or data.get("totalCount")
-            if total is not None and len(tenders) >= int(total):
-                break
-            if len(items) < page_size:
-                break  # Last page
-
-            page += 1
-
-    return tenders
+    return results

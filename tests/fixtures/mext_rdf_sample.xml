@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF
+  xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+  xmlns="http://purl.org/rss/1.0/"
+  xmlns:dc="http://purl.org/dc/elements/1.1/"
+>
+  <channel rdf:about="https://www.mext.go.jp/b_menu/news/index.rdf">
+    <title>文部科学省 新着情報</title>
+    <link>https://www.mext.go.jp/</link>
+    <description>文部科学省の新着情報</description>
+    <items>
+      <rdf:Seq>
+        <rdf:li rdf:resource="https://www.mext.go.jp/b_menu/news/2024/001.html"/>
+        <rdf:li rdf:resource="https://www.mext.go.jp/b_menu/news/2024/002.html"/>
+        <rdf:li rdf:resource="https://www.mext.go.jp/b_menu/news/2024/003.html"/>
+      </rdf:Seq>
+    </items>
+  </channel>
+
+  <item rdf:about="https://www.mext.go.jp/b_menu/news/2024/001.html">
+    <title>高レベル放射性廃棄物の地層処分に関する研究開発の公募について</title>
+    <link>https://www.mext.go.jp/b_menu/news/2024/001.html</link>
+    <description>高レベル放射性廃棄物のガラス固化・地層処分に係る基盤研究を公募します。TRU 廃棄物の減容化研究も対象。</description>
+    <dc:date>2024-04-02T10:00:00+09:00</dc:date>
+  </item>
+
+  <item rdf:about="https://www.mext.go.jp/b_menu/news/2024/002.html">
+    <title>電気事業法改正に伴う配電規制の在り方に関する調査研究公募</title>
+    <link>https://www.mext.go.jp/b_menu/news/2024/002.html</link>
+    <description>電気事業法改正に伴うレベニューキャップ制度・託送料金制度見直しに関する調査研究を公募。</description>
+    <dc:date>2024-04-11T10:00:00+09:00</dc:date>
+  </item>
+
+  <item rdf:about="https://www.mext.go.jp/b_menu/news/2024/003.html">
+    <title>庁舎什器・備品の調達に係る入札公告</title>
+    <link>https://www.mext.go.jp/b_menu/news/2024/003.html</link>
+    <description>文部科学省庁舎で使用する什器・備品の調達を行います。</description>
+    <dc:date>2024-04-08T10:00:00+09:00</dc:date>
+  </item>
+</rdf:RDF>

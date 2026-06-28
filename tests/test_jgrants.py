@@ -13,6 +13,7 @@ import respx
 from src.fetchers.jgrants import (
     ALLOWED_HOST,
     BASE_URL,
+    _DEFAULT_KEYWORDS,
     _SUBSIDIES_PATH,
     _assert_allowed_url,
     _item_to_tender,
@@ -147,74 +148,180 @@ def test_item_to_tender_port_url_returns_none():
 
 
 # ---------------------------------------------------------------------------
-# fetch_recent — mocked HTTP
+# fetch_recent — required parameters in every request
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def sample_payload():
-    return json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+@respx.mock
+def test_fetch_recent_required_params_present():
+    """Every request must include keyword, sort, order, acceptance."""
+    captured_requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured_requests.append(request)
+        return httpx.Response(200, json={"subsidies": [], "total": 0})
+
+    respx.get(BASE_URL + _SUBSIDIES_PATH).mock(side_effect=handler)
+    fetch_recent(keywords=["電力"])
+
+    assert len(captured_requests) == 1
+    from urllib.parse import parse_qs, urlparse
+
+    qs = parse_qs(urlparse(str(captured_requests[0].url)).query)
+    assert "keyword" in qs, "keyword param missing"
+    assert "sort" in qs, "sort param missing"
+    assert "order" in qs, "order param missing"
+    assert "acceptance" in qs, "acceptance param missing"
+    assert qs["keyword"] == ["電力"]
 
 
 @respx.mock
-def test_fetch_recent_parses_all_items(sample_payload):
+def test_fetch_recent_keyword_sent_per_query():
+    """Each keyword in the list triggers a separate request."""
+    captured_keywords: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        from urllib.parse import parse_qs, urlparse
+
+        qs = parse_qs(urlparse(str(request.url)).query)
+        captured_keywords.extend(qs.get("keyword", []))
+        return httpx.Response(200, json={"subsidies": [], "total": 0})
+
+    respx.get(BASE_URL + _SUBSIDIES_PATH).mock(side_effect=handler)
+    keywords = ["電力", "原子力", "水素"]
+    fetch_recent(keywords=keywords)
+
+    assert set(captured_keywords) == set(keywords)
+
+
+@respx.mock
+def test_fetch_recent_union_deduplication():
+    """Items with the same external_id returned by different keyword queries
+    must appear only once in the result."""
+    sample = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        # Return the same 3-item payload for every keyword
+        return httpx.Response(200, json=sample)
+
+    respx.get(BASE_URL + _SUBSIDIES_PATH).mock(side_effect=handler)
+    tenders = fetch_recent(keywords=["電力", "原子力", "水素"])
+
+    # Only 3 unique items despite 3 queries each returning 3 items
+    assert len(tenders) == 3
+    ids = [t.external_id for t in tenders]
+    assert len(ids) == len(set(ids)), "Duplicate external_ids found"
+
+
+@respx.mock
+def test_fetch_recent_limit_respected():
+    """fetch_recent must return at most limit items across all keyword queries."""
+    sample = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+    # Assign unique IDs so dedup doesn't interfere
+    unique_samples = []
+    for i, kw in enumerate(["電力", "原子力", "水素"]):
+        payload = {
+            "subsidies": [
+                {**item, "subsidyId": f"{item['subsidyId']}-{i}"}
+                for item in sample["subsidies"]
+            ]
+        }
+        unique_samples.append(payload)
+
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        resp = httpx.Response(200, json=unique_samples[min(call_count, len(unique_samples) - 1)])
+        call_count += 1
+        return resp
+
+    respx.get(BASE_URL + _SUBSIDIES_PATH).mock(side_effect=handler)
+    tenders = fetch_recent(keywords=["電力", "原子力", "水素"], limit=4)
+
+    assert len(tenders) <= 4
+
+
+@respx.mock
+def test_fetch_recent_http400_skips_keyword_continues():
+    """A 400 error for one keyword should be skipped; other keywords continue."""
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return httpx.Response(400)  # First keyword fails
+        return httpx.Response(
+            200,
+            json={
+                "subsidies": [
+                    {
+                        "subsidyId": f"JG-kw{call_count}",
+                        "subsidyName": f"案件{call_count}",
+                        "url": f"https://{ALLOWED_HOST}/subsidies/kw{call_count}",
+                        "acceptStartDate": "2024-04-01",
+                    }
+                ]
+            },
+        )
+
+    respx.get(BASE_URL + _SUBSIDIES_PATH).mock(side_effect=handler)
+    tenders = fetch_recent(keywords=["エラーキーワード", "電力"])
+
+    # The second keyword should yield 1 result; the first was skipped
+    assert len(tenders) >= 1
+
+
+@respx.mock
+def test_fetch_recent_all_keywords_fail_returns_empty():
+    """If all keyword requests fail, return empty list (no exception raised)."""
+    respx.get(BASE_URL + _SUBSIDIES_PATH).mock(return_value=httpx.Response(400))
+    tenders = fetch_recent(keywords=["電力"])
+    assert tenders == []
+
+
+@respx.mock
+def test_fetch_recent_parses_all_items():
+    sample = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
     respx.get(BASE_URL + _SUBSIDIES_PATH).mock(
-        return_value=httpx.Response(200, json=sample_payload)
+        return_value=httpx.Response(200, json=sample)
     )
-    tenders = fetch_recent(limit=100)
-    # 3 items in fixture; one has no matching content but should still parse
+    tenders = fetch_recent(keywords=["電力"], limit=100)
     assert len(tenders) == 3
     sources = {t.source for t in tenders}
     assert sources == {"jgrants"}
 
 
 @respx.mock
-def test_fetch_recent_returns_tender_objects(sample_payload):
+def test_fetch_recent_returns_tender_objects():
+    sample = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
     respx.get(BASE_URL + _SUBSIDIES_PATH).mock(
-        return_value=httpx.Response(200, json=sample_payload)
+        return_value=httpx.Response(200, json=sample)
     )
-    tenders = fetch_recent(limit=100)
+    tenders = fetch_recent(keywords=["電力"], limit=100)
     from src.models import Tender
 
     assert all(isinstance(t, Tender) for t in tenders)
 
 
 @respx.mock
-def test_fetch_recent_respects_limit(sample_payload):
-    # Fixture has 3 items; limit to 1
+def test_fetch_recent_respects_limit():
+    sample = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
     respx.get(BASE_URL + _SUBSIDIES_PATH).mock(
-        return_value=httpx.Response(200, json=sample_payload)
+        return_value=httpx.Response(200, json=sample)
     )
-    tenders = fetch_recent(limit=1)
+    tenders = fetch_recent(keywords=["電力"], limit=1)
     assert len(tenders) <= 1
 
 
 @respx.mock
-def test_fetch_recent_4xx_raises():
-    respx.get(BASE_URL + _SUBSIDIES_PATH).mock(
-        return_value=httpx.Response(403)
-    )
-    with pytest.raises(Exception):
-        fetch_recent()
-
-
-@respx.mock
-def test_fetch_recent_5xx_retries_and_raises():
-    respx.get(BASE_URL + _SUBSIDIES_PATH).mock(
-        return_value=httpx.Response(503)
-    )
-    with pytest.raises(Exception):
-        fetch_recent()
-
-
-def test_fetch_recent_invalid_limit():
-    with pytest.raises(ValueError, match="limit must be a positive integer"):
-        fetch_recent(limit=0)
-
-
-def test_fetch_recent_negative_limit():
-    with pytest.raises(ValueError, match="limit must be a positive integer"):
-        fetch_recent(limit=-5)
+def test_fetch_recent_5xx_warns_and_skips_keyword():
+    """5xx errors (after retries) for a keyword are logged and skipped."""
+    respx.get(BASE_URL + _SUBSIDIES_PATH).mock(return_value=httpx.Response(503))
+    # Should not raise; all keywords will fail and be skipped
+    tenders = fetch_recent(keywords=["電力"])
+    assert tenders == []
 
 
 @respx.mock
@@ -222,5 +329,20 @@ def test_fetch_recent_empty_response():
     respx.get(BASE_URL + _SUBSIDIES_PATH).mock(
         return_value=httpx.Response(200, json={"total": 0, "subsidies": []})
     )
-    tenders = fetch_recent()
+    tenders = fetch_recent(keywords=["電力"])
     assert tenders == []
+
+
+def test_fetch_recent_invalid_limit():
+    with pytest.raises(ValueError, match="limit must be > 0"):
+        fetch_recent(limit=0)
+
+
+def test_fetch_recent_negative_limit():
+    with pytest.raises(ValueError, match="limit must be > 0"):
+        fetch_recent(limit=-5)
+
+
+def test_default_keywords_non_empty():
+    """_DEFAULT_KEYWORDS must be non-empty so fetch_recent has something to query."""
+    assert len(_DEFAULT_KEYWORDS) > 0
