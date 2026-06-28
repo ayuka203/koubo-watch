@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>JST 調達情報</title>
+    <link>https://choutatsu.jst.go.jp/</link>
+    <description>国立研究開発法人科学技術振興機構 調達情報</description>
+    <language>ja</language>
+    <item>
+      <title>放射線環境モニタリングシステムの研究開発業務</title>
+      <link>https://choutatsu.jst.go.jp/bid/2024/001</link>
+      <description>空間線量率の連続測定および低線量被ばく疫学研究に係る業務の委託先を公募します。</description>
+      <pubDate>Mon, 01 Apr 2024 09:00:00 +0900</pubDate>
+      <guid>https://choutatsu.jst.go.jp/bid/2024/001</guid>
+    </item>
+    <item>
+      <title>SMR（小型モジュール炉）安全評価手法の研究委託</title>
+      <link>https://choutatsu.jst.go.jp/bid/2024/002</link>
+      <description>次世代の小型モジュール炉に関する確率論的リスク評価（PRA）手法の開発。</description>
+      <pubDate>Wed, 10 Apr 2024 09:00:00 +0900</pubDate>
+      <guid>https://choutatsu.jst.go.jp/bid/2024/002</guid>
+    </item>
+    <item>
+      <title>事務補佐員の募集</title>
+      <link>https://choutatsu.jst.go.jp/bid/2024/003</link>
+      <description>一般事務を行う事務補佐員を募集します。</description>
+      <pubDate>Fri, 12 Apr 2024 09:00:00 +0900</pubDate>
+      <guid>https://choutatsu.jst.go.jp/bid/2024/003</guid>
+    </item>
+  </channel>
+</rss>

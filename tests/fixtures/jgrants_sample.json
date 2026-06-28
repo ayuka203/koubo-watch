@@ -1,0 +1,31 @@
+{
+  "total": 3,
+  "page": 1,
+  "limit": 100,
+  "subsidies": [
+    {
+      "subsidyId": "JG-2024-00123",
+      "subsidyName": "廃炉・汚染水対策に関する技術開発事業",
+      "url": "https://api.jgrants-portal.go.jp/subsidies/JG-2024-00123",
+      "targetDescription": "福島第一原子力発電所の廃炉・汚染水対策に係る技術開発を公募します。燃料デブリ取り出しに関連する研究を含む。",
+      "acceptStartDate": "2024-04-01",
+      "acceptEndDate": "2024-05-31"
+    },
+    {
+      "subsidyId": "JG-2024-00456",
+      "subsidyName": "電力系統の安定化技術研究開発",
+      "url": "https://api.jgrants-portal.go.jp/subsidies/JG-2024-00456",
+      "targetDescription": "再生可能エネルギー大量導入時における電力系統安定化のための技術開発。VPP・デマンドレスポンスを含む。",
+      "acceptStartDate": "2024-04-15",
+      "acceptEndDate": "2024-06-15"
+    },
+    {
+      "subsidyId": "JG-2024-00789",
+      "subsidyName": "庁舎清掃業務委託",
+      "url": "https://api.jgrants-portal.go.jp/subsidies/JG-2024-00789",
+      "targetDescription": "官庁施設の清掃業務を委託します。",
+      "acceptStartDate": "2024-04-01",
+      "acceptEndDate": "2024-04-30"
+    }
+  ]
+}

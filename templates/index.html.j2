@@ -1,0 +1,224 @@
+{% extends "_base.html.j2" %}
+
+{% block title %}KOUBO WATCH — 最新案件{% endblock %}
+
+{% block extra_style %}
+<style>
+  /* ----------------------------------------------------------------
+     CSS :target タブ切り替え（JS 不要）
+     radio input hidden + label でタブ UI を実現する
+  ---------------------------------------------------------------- */
+  .tab-bar { display: none; }
+
+  .tab-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .25rem;
+    margin-bottom: 1.2rem;
+    border-bottom: 2px solid var(--accent);
+    padding-bottom: .5rem;
+  }
+
+  .tab-controls input[type="radio"] {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+    pointer-events: none;
+  }
+
+  .tab-controls label {
+    cursor: pointer;
+    padding: .35rem .85rem;
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius);
+    font-size: .88rem;
+    background: var(--card-bg);
+    color: var(--muted);
+    user-select: none;
+    transition: background .15s, color .15s;
+  }
+
+  /* Show active tab label */
+  #tab-all:checked     ~ .tab-controls label[for="tab-all"],
+  #tab-nuclear:checked ~ .tab-controls label[for="tab-nuclear"],
+  #tab-radiation:checked ~ .tab-controls label[for="tab-radiation"],
+  #tab-grid:checked    ~ .tab-controls label[for="tab-grid"] {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+  }
+
+  /* Hide all panels by default */
+  .tab-panel { display: none; }
+
+  /* Show the selected panel */
+  #tab-all:checked       ~ .tab-panels .tab-panel[data-tab="all"],
+  #tab-nuclear:checked   ~ .tab-panels .tab-panel[data-tab="nuclear"],
+  #tab-radiation:checked ~ .tab-panels .tab-panel[data-tab="radiation"],
+  #tab-grid:checked      ~ .tab-panels .tab-panel[data-tab="grid"] {
+    display: block;
+  }
+
+  /* --- Stats bar --- */
+  .stats-bar {
+    font-size: .85rem;
+    color: var(--muted);
+    margin-bottom: 1rem;
+  }
+
+  /* --- Tender card grid --- */
+  .tender-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  @media (min-width: 700px) {
+    .tender-grid { grid-template-columns: 1fr 1fr; }
+  }
+
+  @media (min-width: 1000px) {
+    .tender-grid { grid-template-columns: 1fr 1fr 1fr; }
+  }
+
+  /* --- Tender card --- */
+  .tender-card {
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-left: 4px solid var(--accent);
+    border-radius: var(--radius);
+    padding: .85rem 1rem;
+    text-decoration: none;
+    color: inherit;
+    display: flex;
+    flex-direction: column;
+    gap: .4rem;
+    transition: box-shadow .15s, border-left-color .15s;
+  }
+  .tender-card:hover {
+    box-shadow: 0 2px 8px rgba(26,58,110,.15);
+    border-left-color: var(--score-high);
+  }
+  .tender-card .card-title {
+    font-size: .95rem;
+    font-weight: 600;
+    color: var(--ink);
+    /* clamp to 3 lines */
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .card-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .35rem;
+    align-items: center;
+  }
+  .card-reason {
+    font-size: .82rem;
+    color: var(--muted);
+    font-style: italic;
+    /* clamp to 2 lines */
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .card-source {
+    font-size: .78rem;
+    color: var(--muted);
+    margin-top: auto;
+  }
+
+  @media (max-width: 600px) {
+    .tender-grid { grid-template-columns: 1fr; }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="stats-bar">
+  対象案件数: <strong>{{ tenders_active | length }}</strong> 件（AI スコア 5 以上 × 期限未過）
+  &nbsp;|&nbsp; 生成: {{ generated_at }}
+</div>
+
+{# Hidden radio inputs must come BEFORE the labels they control #}
+<input class="tab-bar" type="radio" name="tab" id="tab-all" checked>
+<input class="tab-bar" type="radio" name="tab" id="tab-nuclear">
+<input class="tab-bar" type="radio" name="tab" id="tab-radiation">
+<input class="tab-bar" type="radio" name="tab" id="tab-grid">
+
+<div class="tab-controls">
+  <label for="tab-all">すべて ({{ tenders_active | length }})</label>
+  <label for="tab-nuclear">原子力 ({{ tenders_nuclear | length }})</label>
+  <label for="tab-radiation">放射線 ({{ tenders_radiation | length }})</label>
+  <label for="tab-grid">送配電 ({{ tenders_grid | length }})</label>
+</div>
+
+<div class="tab-panels">
+  {% for tab_id, tab_tenders in [
+       ("all",       tenders_active),
+       ("nuclear",   tenders_nuclear),
+       ("radiation", tenders_radiation),
+       ("grid",      tenders_grid),
+     ] %}
+  <div class="tab-panel" data-tab="{{ tab_id }}">
+    {% if tab_tenders %}
+    <div class="tender-grid">
+      {% for t in tab_tenders %}
+      <a class="tender-card" href="{{ t.url }}" target="_blank" rel="noopener noreferrer">
+        <div class="card-title">{{ t.title }}</div>
+        <div class="card-meta">
+          {# AI score badge #}
+          {% if t.energy_system_score is not none %}
+            {% if t.energy_system_score >= 8 %}
+              <span class="badge badge-score-high">★ {{ t.energy_system_score }}</span>
+            {% elif t.energy_system_score >= 5 %}
+              <span class="badge badge-score-mid">★ {{ t.energy_system_score }}</span>
+            {% else %}
+              <span class="badge badge-score-low">★ {{ t.energy_system_score }}</span>
+            {% endif %}
+          {% endif %}
+          {# Deadline badge #}
+          {% if t.deadline %}
+            {% set days_left = (t.deadline - today).days %}
+            {% if days_left < 0 %}
+              <span class="badge badge-deadline-passed">期限切れ</span>
+            {% elif days_left == 0 %}
+              <span class="badge badge-deadline">本日期限</span>
+            {% elif days_left <= 7 %}
+              <span class="badge badge-deadline">あと {{ days_left }} 日</span>
+            {% else %}
+              <span class="badge badge-deadline-ok">{{ t.deadline.strftime("%m/%d") }} まで</span>
+            {% endif %}
+          {% endif %}
+          {# Research badge #}
+          {% if t.is_research %}
+            <span class="badge badge-research">R&amp;D</span>
+          {% endif %}
+        </div>
+        {# Category tags #}
+        <div class="category-tags">
+          {% if t.category_nuclear %}<span class="badge badge-cat">原子力</span>{% endif %}
+          {% if t.category_radiation %}<span class="badge badge-cat">放射線</span>{% endif %}
+          {% if t.category_grid %}<span class="badge badge-cat">送配電</span>{% endif %}
+        </div>
+        {# AI reason #}
+        {% if t.ai_reason %}
+        <div class="card-reason">{{ t.ai_reason }}</div>
+        {% endif %}
+        <div class="card-source">{{ t.source }}</div>
+      </a>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty">該当案件なし</div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}
+
+{% block generated_at %}{{ generated_at }}{% endblock %}

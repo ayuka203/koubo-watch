@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+cache/
+public/
+.env
+.claude/
+# data/koubo.sqlite is intentionally NOT ignored (state persists via git)
+data/state.json

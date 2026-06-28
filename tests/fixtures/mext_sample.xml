@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>文部科学省 公募情報</title>
+    <link>https://www.mext.go.jp/</link>
+    <description>文部科学省の公募情報・入札情報</description>
+    <language>ja</language>
+    <item>
+      <title>高レベル放射性廃棄物の地層処分に関する研究開発事業</title>
+      <link>https://www.mext.go.jp/b_menu/offer/2024/001.html</link>
+      <description>高レベル放射性廃棄物のガラス固化・地層処分に係る基盤研究を公募します。TRU 廃棄物の減容化研究も対象。</description>
+      <pubDate>Tue, 02 Apr 2024 10:00:00 +0900</pubDate>
+      <guid>https://www.mext.go.jp/b_menu/offer/2024/001</guid>
+    </item>
+    <item>
+      <title>電気事業法改正に伴う配電規制の在り方に関する調査研究</title>
+      <link>https://www.mext.go.jp/b_menu/offer/2024/002.html</link>
+      <description>電気事業法改正に伴うレベニューキャップ制度・託送料金制度見直しに関する調査研究を公募。</description>
+      <pubDate>Thu, 11 Apr 2024 10:00:00 +0900</pubDate>
+      <guid>https://www.mext.go.jp/b_menu/offer/2024/002</guid>
+    </item>
+    <item>
+      <title>庁舎什器・備品の調達</title>
+      <link>https://www.mext.go.jp/b_menu/offer/2024/003.html</link>
+      <description>文部科学省庁舎で使用する什器・備品の調達を行います。</description>
+      <pubDate>Mon, 08 Apr 2024 10:00:00 +0900</pubDate>
+      <guid>https://www.mext.go.jp/b_menu/offer/2024/003</guid>
+    </item>
+  </channel>
+</rss>
