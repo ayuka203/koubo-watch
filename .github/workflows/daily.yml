@@ -24,7 +24,7 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Run koubo-watch
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.KOUBO_WATCH }}
         run: python -m src.main
       - name: Commit DB state
         run: |
