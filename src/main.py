@@ -116,8 +116,9 @@ def main() -> int:
     if args.classify_pending:
         return _run_classify_pending(args.max_tenders)
 
-    stats = {
+    stats: dict = {
         "fetched": 0,
+        "truncated_to": None,  # set to int when --max-tenders trims the list
         "excluded": 0,
         "no_category": 0,
         "upserted": 0,
@@ -165,6 +166,7 @@ def main() -> int:
                 len(raw_tenders),
                 args.max_tenders,
             )
+            stats["truncated_to"] = args.max_tenders
             raw_tenders = raw_tenders[: args.max_tenders]
 
         # --backfill --since フィルタ
@@ -228,6 +230,11 @@ def main() -> int:
     print("\n=== koubo-watch 実行結果 ===", file=sys.stderr)
     if not args.rebuild_site_only:
         print(f"  取得:            {stats['fetched']}", file=sys.stderr)
+        if stats.get("truncated_to") is not None:
+            print(
+                f"  上限切詰め:       {stats['fetched']} → {stats['truncated_to']}",
+                file=sys.stderr,
+            )
         print(f"  除外フィルタ:     {stats['excluded']}", file=sys.stderr)
         print(f"  カテゴリなし:     {stats['no_category']}", file=sys.stderr)
         if no_category_examples:

@@ -4,11 +4,13 @@ ANTHROPIC_API_KEY が未設定の場合は get_client() が RuntimeError を rai
 classify_tender() は description を 800 字に切り詰めてから Claude に渡す。
 プロンプトインジェクション対策として、タイトル・description の制御文字除去と
 インジェクション定型句の検知を行う（英語・日本語パターン両対応）。
+
+構造化出力は tools + tool_choice パターンを使用する。
+output_config は Anthropic Python SDK の公開 API シグネチャに存在しないため使用しない。
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 import unicodedata
@@ -28,6 +30,10 @@ logger = logging.getLogger(__name__)
 _MODEL_HAIKU = "claude-haiku-4-5-20251001"
 _MAX_TOKENS = 500
 _MAX_DESCRIPTION_CHARS = 800
+
+# Tool name / description for structured output via tools + tool_choice
+_TOOL_NAME = "submit_assessment"
+_TOOL_DESCRIPTION = "Submit the structured assessment for the given tender."
 
 # Regex patterns for prompt injection detection — English and Japanese
 _INJECTION_PATTERNS = re.compile(
@@ -112,6 +118,16 @@ def _fix_schema(schema: dict) -> dict:
     return schema
 
 
+def _build_tool_schema() -> dict:
+    """Anthropic tools 用 JSON schema を構築。
+
+    TenderAssessment の Pydantic スキーマを取得し、
+    additionalProperties: false を再帰的に追加して返す。
+    """
+    schema = TenderAssessment.model_json_schema()
+    return _fix_schema(schema)
+
+
 # ---------------------------------------------------------------------------
 # Input sanitization (prompt injection guard)
 # ---------------------------------------------------------------------------
@@ -191,31 +207,42 @@ def classify_tender(title: str, description: str | None) -> TenderAssessment:
 
     client = get_client()
 
-    schema = _fix_schema(TenderAssessment.model_json_schema())
-
     try:
         resp = client.messages.create(
             model=_MODEL_HAIKU,
             max_tokens=_MAX_TOKENS,
             system=_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": prompt}],
-            output_config={
-                "format": {
-                    "type": "json_schema",
-                    "schema": schema,
+            tools=[
+                {
+                    "name": _TOOL_NAME,
+                    "description": _TOOL_DESCRIPTION,
+                    "input_schema": _build_tool_schema(),
                 }
-            },
+            ],
+            tool_choice={"type": "tool", "name": _TOOL_NAME},
+            messages=[{"role": "user", "content": prompt}],
         )
     except Exception as exc:
-        raise RuntimeError(f"Claude API 呼び出しに失敗しました: {exc}") from exc
-
-    raw_text = next((b.text for b in resp.content if b.type == "text"), "")
-    try:
-        data = json.loads(raw_text)
-        return TenderAssessment.model_validate(data)
-    except (json.JSONDecodeError, ValidationError) as exc:
-        preview = (raw_text[:200] + "…") if len(raw_text) > 200 else raw_text
-        logger.debug("full raw response: %s", raw_text)
+        logger.debug("Claude API exception detail", exc_info=True)
         raise RuntimeError(
-            f"Claude API 応答の JSON 検証に失敗しました: {exc}\n--- preview ---\n{preview}"
+            f"Claude API 呼び出しに失敗しました: {type(exc).__name__}"
         ) from exc
+
+    # tool_use ブロックを取り出す
+    tool_use = next(
+        (b for b in resp.content if getattr(b, "type", None) == "tool_use"),
+        None,
+    )
+    if tool_use is None:
+        raise RuntimeError("Claude API レスポンスに tool_use ブロックが含まれていません")
+
+    try:
+        assessment = TenderAssessment.model_validate(tool_use.input)
+    except ValidationError as exc:
+        preview = str(tool_use.input)[:200]
+        logger.debug("full tool_use.input: %s", tool_use.input)
+        raise RuntimeError(
+            f"Claude API 応答の検証に失敗しました: {exc}\n--- preview ---\n{preview}"
+        ) from exc
+
+    return assessment

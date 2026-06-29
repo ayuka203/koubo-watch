@@ -214,10 +214,33 @@ def test_parse_feed_http_link_skipped():
 
 
 # ---------------------------------------------------------------------------
-# fetch_recent — mocked HTTP
+# fetch_recent — disabled fetcher (RSS URL under re-investigation)
 # ---------------------------------------------------------------------------
 
 
+def test_fetch_recent_returns_empty_list():
+    """fetch_recent returns [] while the JST RSS URL is under re-investigation."""
+    tenders = fetch_recent()
+    assert tenders == []
+
+
+def test_fetch_recent_emits_warning(caplog):
+    """fetch_recent must emit a WARNING log when it is disabled."""
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="src.fetchers.jst"):
+        fetch_recent()
+
+    assert any(
+        "無効化" in r.message for r in caplog.records
+    ), "Expected a warning log containing '無効化'"
+
+
+# The tests below exercise the HTTP/retry behaviour of the old live fetcher.
+# They are skipped until the real RSS URL is identified and the fetcher is re-enabled.
+
+
+@pytest.mark.skip(reason="JST フェッチャーは RSS URL 再調査までの間、無効化済み")
 @respx.mock
 def test_fetch_recent_returns_tenders():
     fixture_bytes = FIXTURE_PATH.read_bytes()
@@ -226,6 +249,7 @@ def test_fetch_recent_returns_tenders():
     assert len(tenders) == 3
 
 
+@pytest.mark.skip(reason="JST フェッチャーは RSS URL 再調査までの間、無効化済み")
 @respx.mock
 def test_fetch_recent_4xx_raises():
     respx.get(RSS_URL).mock(return_value=httpx.Response(404))
@@ -233,6 +257,7 @@ def test_fetch_recent_4xx_raises():
         fetch_recent()
 
 
+@pytest.mark.skip(reason="JST フェッチャーは RSS URL 再調査までの間、無効化済み")
 @respx.mock
 def test_fetch_recent_5xx_raises_after_retries():
     respx.get(RSS_URL).mock(return_value=httpx.Response(500))

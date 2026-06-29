@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -12,6 +11,7 @@ from pydantic import ValidationError
 
 from src.classifier import (
     TenderAssessment,
+    _TOOL_NAME,
     _fix_schema,
     _sanitize_input,
     classify_tender,
@@ -24,16 +24,27 @@ from src.classifier import (
 # ---------------------------------------------------------------------------
 
 
-def _make_mock_response(score: int, reason: str, is_research: bool) -> MagicMock:
+class _MockToolUse:
+    """Mimics an Anthropic tool_use content block."""
+
+    def __init__(self, input_data: dict) -> None:
+        self.type = "tool_use"
+        self.name = _TOOL_NAME
+        self.input = input_data
+
+
+class _MockResponse:
+    """Mimics an Anthropic messages.create() response with a single tool_use block."""
+
+    def __init__(self, input_data: dict) -> None:
+        self.content = [_MockToolUse(input_data)]
+
+
+def _make_mock_response(score: int, reason: str, is_research: bool) -> _MockResponse:
     """Return a mock Anthropic response with the given assessment fields."""
-    payload = json.dumps(
-        {"energy_system_score": score, "reason": reason, "is_research": is_research},
-        ensure_ascii=False,
+    return _MockResponse(
+        {"energy_system_score": score, "reason": reason, "is_research": is_research}
     )
-    block = SimpleNamespace(type="text", text=payload)
-    resp = MagicMock()
-    resp.content = [block]
-    return resp
 
 
 # ---------------------------------------------------------------------------
@@ -254,54 +265,40 @@ def test_classify_tender_api_error(monkeypatch):
             classify_tender("タイトル", "説明")
 
 
-def test_classify_tender_invalid_json(monkeypatch):
-    block = SimpleNamespace(type="text", text="not valid json {{{")
-    resp = MagicMock()
-    resp.content = [block]
+def test_classify_tender_pydantic_validation_fails(monkeypatch):
+    """tool_use.input with score out of range fails Pydantic validation."""
+    resp = _MockResponse({"energy_system_score": 99, "reason": "x", "is_research": False})
     mock_client = MagicMock()
     mock_client.messages.create.return_value = resp
 
     with patch("src.classifier.get_client", return_value=mock_client):
-        with pytest.raises(RuntimeError, match="JSON 検証に失敗"):
+        with pytest.raises(RuntimeError, match="応答の検証に失敗"):
             classify_tender("タイトル", "説明")
 
 
-def test_classify_tender_json_fails_pydantic_validation(monkeypatch):
-    """Valid JSON but fails Pydantic schema (score out of range)."""
-    payload = json.dumps({"energy_system_score": 99, "reason": "x", "is_research": False})
-    block = SimpleNamespace(type="text", text=payload)
+def test_classify_tender_no_tool_use_block(monkeypatch):
+    """Response with no tool_use block raises RuntimeError."""
+    # Return a response with only a text block (not tool_use)
+    block = SimpleNamespace(type="text", text="unexpected text")
     resp = MagicMock()
     resp.content = [block]
     mock_client = MagicMock()
     mock_client.messages.create.return_value = resp
 
     with patch("src.classifier.get_client", return_value=mock_client):
-        with pytest.raises(RuntimeError, match="JSON 検証に失敗"):
-            classify_tender("タイトル", "説明")
-
-
-def test_classify_tender_empty_response_text(monkeypatch):
-    block = SimpleNamespace(type="text", text="")
-    resp = MagicMock()
-    resp.content = [block]
-    mock_client = MagicMock()
-    mock_client.messages.create.return_value = resp
-
-    with patch("src.classifier.get_client", return_value=mock_client):
-        with pytest.raises(RuntimeError, match="JSON 検証に失敗"):
+        with pytest.raises(RuntimeError, match="tool_use ブロックが含まれていません"):
             classify_tender("タイトル", None)
 
 
-def test_classify_tender_no_text_block(monkeypatch):
-    """Response has no text block (e.g., only image block)."""
-    block = SimpleNamespace(type="image", text=None)
+def test_classify_tender_empty_content_list(monkeypatch):
+    """Response with empty content list raises RuntimeError about tool_use."""
     resp = MagicMock()
-    resp.content = [block]
+    resp.content = []
     mock_client = MagicMock()
     mock_client.messages.create.return_value = resp
 
     with patch("src.classifier.get_client", return_value=mock_client):
-        with pytest.raises(RuntimeError, match="JSON 検証に失敗"):
+        with pytest.raises(RuntimeError, match="tool_use ブロックが含まれていません"):
             classify_tender("タイトル", None)
 
 
@@ -406,6 +403,34 @@ def test_classify_tender_sends_system_prompt(monkeypatch):
     call_kwargs = mock_client.messages.create.call_args[1]
     assert "system" in call_kwargs
     assert call_kwargs["system"] == _SYSTEM_PROMPT
+
+
+# ---------------------------------------------------------------------------
+# tools + tool_choice are passed to messages.create
+# ---------------------------------------------------------------------------
+
+
+def test_classify_tender_sends_tools_and_tool_choice(monkeypatch):
+    """classify_tender must use tools + tool_choice (not output_config)."""
+    from src.classifier import _TOOL_NAME
+
+    mock_resp = _make_mock_response(5, "テスト", False)
+    mock_client = MagicMock()
+    mock_client.messages.create.return_value = mock_resp
+
+    with patch("src.classifier.get_client", return_value=mock_client):
+        classify_tender("送配電設備の保全", "詳細説明")
+
+    call_kwargs = mock_client.messages.create.call_args[1]
+    # tools must be present and contain our tool
+    assert "tools" in call_kwargs
+    assert len(call_kwargs["tools"]) == 1
+    assert call_kwargs["tools"][0]["name"] == _TOOL_NAME
+    assert "input_schema" in call_kwargs["tools"][0]
+    # tool_choice must force the tool
+    assert call_kwargs.get("tool_choice") == {"type": "tool", "name": _TOOL_NAME}
+    # output_config must NOT be present
+    assert "output_config" not in call_kwargs
 
 
 # ---------------------------------------------------------------------------

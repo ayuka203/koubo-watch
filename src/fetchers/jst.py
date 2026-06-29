@@ -177,10 +177,21 @@ def _parse_feed(xml_content: bytes | str) -> list[Tender]:
 def fetch_recent() -> list[Tender]:
     """Fetch and parse the JST procurement RSS feed.
 
+    .. warning::
+        `choutatsu.jst.go.jp/rss.php` currently returns an HTML guidance page
+        instead of an RSS feed.  This fetcher is **disabled** until the real
+        RSS URL is identified.  Callers receive an empty list so the rest of
+        the pipeline is unaffected.
+
     Returns
     -------
     list[Tender]
-        All entries from the feed, most recent first (feedparser order).
+        Empty list while the fetcher is disabled.
     """
-    xml_content = _fetch_rss_bytes(RSS_URL)
-    return _parse_feed(xml_content)
+    logger.warning(
+        "%s: JST フェッチャーは無効化されています（RSS URL 要再調査）。"
+        "https://choutatsu.jst.go.jp/rss.php は HTML 案内ページを返すため"
+        "実 RSS URL を特定するまで空リストを返します。",
+        __name__,
+    )
+    return []
