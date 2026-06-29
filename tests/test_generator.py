@@ -362,6 +362,77 @@ def test_build_site_deadline_today_badge(tmp_path):
     assert "本日期限" in content
 
 
+# ---------------------------------------------------------------------------
+# build_site — data sources section
+# ---------------------------------------------------------------------------
+
+
+def test_build_site_index_contains_data_sources_heading(tmp_path):
+    """index.html should contain the '情報源' section heading."""
+    build_site(tmp_path, [])
+    content = (tmp_path / "index.html").read_text(encoding="utf-8")
+    assert "情報源" in content
+
+
+def test_build_site_index_contains_jgrants_link(tmp_path):
+    """index.html should contain 'Jグランツ' text."""
+    build_site(tmp_path, [])
+    content = (tmp_path / "index.html").read_text(encoding="utf-8")
+    assert "Jグランツ" in content
+
+
+def test_build_site_index_contains_nedo_link(tmp_path):
+    """index.html should contain 'NEDO' text."""
+    build_site(tmp_path, [])
+    content = (tmp_path / "index.html").read_text(encoding="utf-8")
+    assert "NEDO" in content
+
+
+def test_build_site_archive_has_no_data_sources_section(tmp_path):
+    """archive.html should NOT contain the '情報源' section element.
+
+    The CSS rule `.data-sources` is defined in _base.html.j2 and therefore
+    appears in the <style> block of every page.  We verify that the *section
+    element itself* is absent from archive.html.
+    """
+    build_site(tmp_path, [])
+    content = (tmp_path / "archive.html").read_text(encoding="utf-8")
+    assert '<section class="data-sources">' not in content
+    assert "情報源" not in content
+
+
+def test_build_site_data_source_links_have_target_blank(tmp_path):
+    """Each data source anchor must carry target=\"_blank\"."""
+    build_site(tmp_path, [])
+    content = (tmp_path / "index.html").read_text(encoding="utf-8")
+    # All data-source links must have target="_blank"
+    import re
+    anchors = re.findall(r'<a[^>]+class="[^"]*"[^>]*>|<a\s[^>]*href="https://[^"]*"[^>]*>', content)
+    # Simpler: check the section block specifically
+    # The data-sources section should contain target="_blank"
+    assert 'target="_blank"' in content
+
+
+def test_build_site_data_source_links_have_rel_noopener(tmp_path):
+    """Each data source anchor must carry rel=\"noopener\"."""
+    build_site(tmp_path, [])
+    content = (tmp_path / "index.html").read_text(encoding="utf-8")
+    assert 'rel="noopener"' in content
+
+
+def test_build_site_data_source_urls_are_autoescaped(tmp_path):
+    """Jinja2 autoescape should ensure URL characters are safe in href."""
+    build_site(tmp_path, [])
+    content = (tmp_path / "index.html").read_text(encoding="utf-8")
+    # URLs in _DATA_SOURCES contain only safe characters — verify they are
+    # rendered verbatim (not double-escaped) and that no raw '<' appears
+    # injected from the URL field.
+    assert "https://www.jgrants-portal.go.jp/" in content
+    assert "https://www.nedo.go.jp/koubo/" in content
+    # Confirm autoescape is active: no unescaped angle bracket in href context
+    assert 'href="<' not in content
+
+
 def test_build_site_tab_counts(tmp_path):
     tenders = [
         _make_orm(

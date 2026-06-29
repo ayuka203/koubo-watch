@@ -259,3 +259,77 @@ def test_flatten_keyword_hits_empty():
 def test_flatten_keyword_hits_single():
     result = {"放射線": ["環境・除染"]}
     assert flatten_keyword_hits(result) == ["環境・除染"]
+
+
+# ---------------------------------------------------------------------------
+# classify — broadened vocabulary (Jグランツ実態語彙)
+# ---------------------------------------------------------------------------
+
+
+def test_classify_solar_power_grant(keywords):
+    """「太陽光発電補助金」は 送配電/再エネ統合・調整力 にヒットする。"""
+    result = classify("太陽光発電補助金の交付について", None, keywords)
+    assert "送配電" in result
+    assert "再エネ統合・調整力" in result["送配電"]
+
+
+def test_classify_hydrogen_supply_chain(keywords):
+    """「水素サプライチェーン研究開発」は 送配電/再エネ統合・調整力 にヒットする。"""
+    result = classify("水素サプライチェーン研究開発事業", None, keywords)
+    assert "送配電" in result
+    assert "再エネ統合・調整力" in result["送配電"]
+
+
+def test_classify_energy_saving_equipment(keywords):
+    """「省エネ機器導入」は 送配電/再エネ統合・調整力 にヒットする。"""
+    result = classify("省エネ機器導入支援補助金", None, keywords)
+    assert "送配電" in result
+    assert "再エネ統合・調整力" in result["送配電"]
+
+
+def test_classify_carbon_neutral_demo(keywords):
+    """「カーボンニュートラル実証」は 送配電/再エネ統合・調整力 にヒットする。"""
+    result = classify("カーボンニュートラル実証事業の公募", None, keywords)
+    assert "送配電" in result
+    assert "再エネ統合・調整力" in result["送配電"]
+
+
+def test_classify_nuclear_keyword_matches(keywords):
+    """「原子力」単独語が 原子力/廃炉・廃棄物 にヒットする。"""
+    result = classify("原子力に関する研究開発", None, keywords)
+    assert "原子力" in result
+
+
+def test_classify_nuclear_safety_regulation(keywords):
+    """「原子力規制」が 原子力/安全・規制・再稼働 にヒットする。"""
+    result = classify("原子力規制委員会への申請支援", None, keywords)
+    assert "原子力" in result
+    assert "安全・規制・再稼働" in result["原子力"]
+
+
+def test_classify_radioactive_material_decontamination(keywords):
+    """「放射性物質」が 放射線/環境・除染 にヒットする。"""
+    result = classify("放射性物質汚染対処のための調査", None, keywords)
+    assert "放射線" in result
+    assert "環境・除染" in result["放射線"]
+
+
+def test_classify_wind_power(keywords):
+    """「風力発電」が 送配電/再エネ統合・調整力 にヒットする。"""
+    result = classify("風力発電事業への補助金", None, keywords)
+    assert "送配電" in result
+    assert "再エネ統合・調整力" in result["送配電"]
+
+
+def test_classify_decarbonization(keywords):
+    """「脱炭素」が 送配電/再エネ統合・調整力 にヒットする。"""
+    result = classify("脱炭素社会実現に向けた技術開発", None, keywords)
+    assert "送配電" in result
+    assert "再エネ統合・調整力" in result["送配電"]
+
+
+def test_classify_electricity_business(keywords):
+    """「電気事業」が 送配電/系統運用・市場 にヒットする。"""
+    result = classify("電気事業に関する制度調査", None, keywords)
+    assert "送配電" in result
+    assert "系統運用・市場" in result["送配電"]

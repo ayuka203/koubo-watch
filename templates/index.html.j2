@@ -139,6 +139,19 @@
 {% endblock %}
 
 {% block content %}
+<section class="data-sources">
+  <h2 class="data-sources-title">情報源</h2>
+  <p class="data-sources-note">以下のポータルから自動収集しています</p>
+  <ul class="data-sources-list">
+    {% for src in data_sources %}
+    <li class="data-source-item">
+      <a href="{{ src.url }}" target="_blank" rel="noopener">{{ src.name }}</a>
+      {% if src.note %}<span class="data-source-note">{{ src.note }}</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+
 <div class="stats-bar">
   対象案件数: <strong>{{ tenders_active | length }}</strong> 件（AI スコア 5 以上 × 期限未過）
   &nbsp;|&nbsp; 生成: {{ generated_at }}

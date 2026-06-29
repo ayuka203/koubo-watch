@@ -20,6 +20,33 @@ from src.db import TenderORM
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# Data sources shown on the index page
+# ---------------------------------------------------------------------------
+
+_DATA_SOURCES: list[dict[str, str]] = [
+    {
+        "name": "Jグランツ（補助金電子申請）",
+        "url": "https://www.jgrants-portal.go.jp/",
+        "note": "中央政府の統合補助金ポータル",
+    },
+    {
+        "name": "NEDO 公募",
+        "url": "https://www.nedo.go.jp/koubo/",
+        "note": "エネルギー・産業技術総合開発機構",
+    },
+    {
+        "name": "文部科学省 新着",
+        "url": "https://www.mext.go.jp/b_menu/news/index.html",
+        "note": "省全体の新着情報",
+    },
+    {
+        "name": "JST 調達情報",
+        "url": "https://choutatsu.jst.go.jp/",
+        "note": "科学技術振興機構（一時的に自動収集を停止中）",
+    },
+]
+
+# ---------------------------------------------------------------------------
 # Template environment
 # ---------------------------------------------------------------------------
 
@@ -113,6 +140,7 @@ def build_site(out_dir: Path, tenders: list[TenderORM]) -> None:
         tenders_grid=tenders_grid,
         today=today,
         generated_at=generated_at,
+        data_sources=_DATA_SOURCES,
     )
     (out_dir / "index.html").write_text(index_html, encoding="utf-8")
     logger.info("Generated %s (%d active tenders)", out_dir / "index.html", len(tenders_active))

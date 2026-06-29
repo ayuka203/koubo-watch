@@ -111,6 +111,52 @@
     }
     footer a { color: var(--accent); }
 
+    /* --- Data sources section --- */
+    .data-sources {
+      margin: 1.2rem 0 1.6rem;
+      padding: 0.8rem 1rem;
+      background: #f6f3ec;
+      border-left: 3px solid var(--accent);
+      border-radius: 2px;
+    }
+    .data-sources-title {
+      font-size: 0.92rem;
+      font-weight: 700;
+      margin: 0 0 .35rem;
+      color: var(--accent);
+      letter-spacing: .08em;
+    }
+    .data-sources-note {
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin: 0 0 .55rem;
+    }
+    .data-sources-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: .3rem .8rem;
+    }
+    .data-source-item {
+      font-size: 0.85rem;
+    }
+    .data-source-item a {
+      color: var(--ink);
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+    .data-source-item a:hover {
+      color: var(--accent);
+    }
+    .data-source-note {
+      display: block;
+      font-size: 0.7rem;
+      color: var(--muted);
+      margin-left: 0;
+    }
+
     /* --- Mobile --- */
     @media (max-width: 600px) {
       header.masthead h1 { font-size: 1.3rem; }
