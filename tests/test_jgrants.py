@@ -13,6 +13,7 @@ import respx
 from src.fetchers.jgrants import (
     ALLOWED_HOST,
     BASE_URL,
+    PUBLIC_HOST,
     _DEFAULT_KEYWORDS,
     _SUBSIDIES_PATH,
     _assert_allowed_url,
@@ -74,6 +75,11 @@ def test_parse_date_already_date():
     assert _parse_date(d) == d
 
 
+def test_parse_date_iso8601_with_millis_and_z_suffix():
+    """Real API dates look like '2026-07-16T03:00:00.000Z'."""
+    assert _parse_date("2026-07-16T03:00:00.000Z") == date(2026, 7, 16)
+
+
 # ---------------------------------------------------------------------------
 # _item_to_tender
 # ---------------------------------------------------------------------------
@@ -81,12 +87,10 @@ def test_parse_date_already_date():
 
 def test_item_to_tender_basic():
     item = {
-        "subsidyId": "JG-001",
-        "subsidyName": "廃炉技術開発",
-        "url": "https://api.jgrants-portal.go.jp/subsidies/JG-001",
-        "targetDescription": "燃料デブリ取り出し",
-        "acceptStartDate": "2024-04-01",
-        "acceptEndDate": "2024-05-31",
+        "id": "JG-001",
+        "title": "廃炉技術開発",
+        "acceptance_start_datetime": "2024-04-01T00:00:00.000Z",
+        "acceptance_end_datetime": "2024-05-31T15:00:00.000Z",
     }
     tender = _item_to_tender(item)
     assert tender is not None
@@ -97,54 +101,60 @@ def test_item_to_tender_basic():
     assert tender.deadline == date(2024, 5, 31)
 
 
-def test_item_to_tender_no_title_returns_none():
-    item = {"subsidyId": "JG-002", "url": "https://api.jgrants-portal.go.jp/s/2"}
-    assert _item_to_tender(item) is None
-
-
-def test_item_to_tender_no_url_uses_id():
+def test_item_to_tender_builds_public_portal_url():
+    """URL is constructed as www.jgrants-portal.go.jp/subsidy/{id} — the
+    human-facing detail page, which lives on a different domain from the
+    API host (ALLOWED_HOST)."""
     item = {
-        "subsidyId": "JG-003",
-        "subsidyName": "テスト公募",
+        "id": "a0WJ200000TEST123",
+        "title": "テスト公募",
+        "acceptance_start_datetime": "2026-01-01T00:00:00.000Z",
+        "acceptance_end_datetime": "2026-12-31T23:59:59.000Z",
     }
     tender = _item_to_tender(item)
     assert tender is not None
-    assert "JG-003" in tender.url
+    assert str(tender.url) == "https://www.jgrants-portal.go.jp/subsidy/a0WJ200000TEST123"
 
 
-def test_item_to_tender_no_url_no_id_returns_none():
-    item = {"subsidyName": "タイトルのみ"}
+def test_item_to_tender_missing_id_returns_none():
+    item = {"title": "IDなし公募"}
     assert _item_to_tender(item) is None
 
 
-def test_item_to_tender_off_host_url_returns_none():
-    """Response-supplied URLs pointing off-host must be rejected."""
+def test_item_to_tender_missing_title_returns_none():
+    item = {"id": "a0WJ200000TEST456"}
+    assert _item_to_tender(item) is None
+
+
+def test_item_to_tender_missing_both_returns_none():
+    assert _item_to_tender({}) is None
+
+
+def test_item_to_tender_parses_snake_case_dates():
     item = {
-        "subsidyId": "JG-999",
-        "subsidyName": "外部リンク案件",
-        "url": "https://evil.example.com/malicious",
+        "id": "a0WJ200000TEST789",
+        "title": "日付テスト",
+        "acceptance_start_datetime": "2026-06-25T05:00:00.000Z",
+        "acceptance_end_datetime": "2026-07-16T03:00:00.000Z",
     }
-    assert _item_to_tender(item) is None
+    tender = _item_to_tender(item)
+    assert tender is not None
+    assert tender.posted_date is not None
+    assert tender.deadline is not None
 
 
-def test_item_to_tender_http_url_returns_none():
-    """Response-supplied HTTP (non-HTTPS) URLs must be rejected."""
+def test_item_to_tender_description_is_none():
+    """The list API has no description-like field; description must stay None
+    rather than guessing at an unrelated field."""
     item = {
-        "subsidyId": "JG-998",
-        "subsidyName": "HTTP案件",
-        "url": f"http://{ALLOWED_HOST}/subsidies/JG-998",
+        "id": "JG-100",
+        "title": "概要なし案件",
+        "institution_name": "経済産業省",
+        "target_area_search": "全国",
     }
-    assert _item_to_tender(item) is None
-
-
-def test_item_to_tender_port_url_returns_none():
-    """Response-supplied URLs with non-default port must be rejected."""
-    item = {
-        "subsidyId": "JG-997",
-        "subsidyName": "ポート付き案件",
-        "url": f"https://{ALLOWED_HOST}:9000/subsidies/JG-997",
-    }
-    assert _item_to_tender(item) is None
+    tender = _item_to_tender(item)
+    assert tender is not None
+    assert tender.description is None
 
 
 # ---------------------------------------------------------------------------
@@ -159,7 +169,7 @@ def test_fetch_recent_required_params_present():
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured_requests.append(request)
-        return httpx.Response(200, json={"subsidies": [], "total": 0})
+        return httpx.Response(200, json={"result": []})
 
     respx.get(BASE_URL + _SUBSIDIES_PATH).mock(side_effect=handler)
     fetch_recent(keywords=["電力"])
@@ -185,7 +195,7 @@ def test_fetch_recent_keyword_sent_per_query():
 
         qs = parse_qs(urlparse(str(request.url)).query)
         captured_keywords.extend(qs.get("keyword", []))
-        return httpx.Response(200, json={"subsidies": [], "total": 0})
+        return httpx.Response(200, json={"result": []})
 
     respx.get(BASE_URL + _SUBSIDIES_PATH).mock(side_effect=handler)
     keywords = ["電力", "原子力", "水素"]
@@ -221,9 +231,9 @@ def test_fetch_recent_limit_respected():
     unique_samples = []
     for i, kw in enumerate(["電力", "原子力", "水素"]):
         payload = {
-            "subsidies": [
-                {**item, "subsidyId": f"{item['subsidyId']}-{i}"}
-                for item in sample["subsidies"]
+            "result": [
+                {**item, "id": f"{item['id']}-{i}"}
+                for item in sample["result"]
             ]
         }
         unique_samples.append(payload)
@@ -255,12 +265,11 @@ def test_fetch_recent_http400_skips_keyword_continues():
         return httpx.Response(
             200,
             json={
-                "subsidies": [
+                "result": [
                     {
-                        "subsidyId": f"JG-kw{call_count}",
-                        "subsidyName": f"案件{call_count}",
-                        "url": f"https://{ALLOWED_HOST}/subsidies/kw{call_count}",
-                        "acceptStartDate": "2024-04-01",
+                        "id": f"JG-kw{call_count}",
+                        "title": f"案件{call_count}",
+                        "acceptance_start_datetime": "2024-04-01T00:00:00.000Z",
                     }
                 ]
             },
@@ -306,6 +315,20 @@ def test_fetch_recent_returns_tender_objects():
 
 
 @respx.mock
+def test_fetch_recent_urls_point_to_public_portal():
+    """Regression test for the production bug: detail URLs must resolve to
+    the public portal domain, not the API domain, and must not be empty."""
+    sample = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+    respx.get(BASE_URL + _SUBSIDIES_PATH).mock(
+        return_value=httpx.Response(200, json=sample)
+    )
+    tenders = fetch_recent(keywords=["電力"], limit=100)
+    assert len(tenders) == 3
+    for t in tenders:
+        assert str(t.url).startswith(f"https://{PUBLIC_HOST}/subsidy/")
+
+
+@respx.mock
 def test_fetch_recent_respects_limit():
     sample = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
     respx.get(BASE_URL + _SUBSIDIES_PATH).mock(
@@ -327,7 +350,7 @@ def test_fetch_recent_5xx_warns_and_skips_keyword():
 @respx.mock
 def test_fetch_recent_empty_response():
     respx.get(BASE_URL + _SUBSIDIES_PATH).mock(
-        return_value=httpx.Response(200, json={"total": 0, "subsidies": []})
+        return_value=httpx.Response(200, json={"result": []})
     )
     tenders = fetch_recent(keywords=["電力"])
     assert tenders == []

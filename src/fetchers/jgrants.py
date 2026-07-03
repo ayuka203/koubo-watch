@@ -37,6 +37,14 @@ logger = logging.getLogger(__name__)
 ALLOWED_HOST = "api.jgrants-portal.go.jp"
 BASE_URL = f"https://{ALLOWED_HOST}"
 
+# Public-facing portal used for human-readable detail-page links.  This is a
+# *different* domain from the API host above (ALLOWED_HOST / BASE_URL) and is
+# validated against its own allowlist in _item_to_tender — the two allowlists
+# must never be merged, since one governs outbound API requests and the other
+# only governs URLs embedded in output data (never fetched by this process).
+PUBLIC_HOST = "www.jgrants-portal.go.jp"
+PUBLIC_BASE_URL = f"https://{PUBLIC_HOST}"
+
 _SUBSIDIES_PATH = "/exp/v1/public/subsidies"
 
 _TIMEOUT_SECONDS = 30.0
@@ -136,42 +144,43 @@ def _parse_date(value: Any) -> date | None:
         return None
 
 
-def _item_to_tender(item: dict) -> Tender | None:
-    """Convert one API response item to a Tender.  Returns None on bad data."""
-    # Field names are assumptions based on common J-Grants API patterns.
-    # Adjust once real API documentation is confirmed.
-    subsidy_id = str(item.get("subsidyId") or item.get("id") or "")
-    title = str(item.get("subsidyName") or item.get("title") or "").strip()
-    if not title:
+def _item_to_tender(item: dict[str, Any]) -> Tender | None:
+    """Convert one API response item to a Tender.  Returns None on bad data.
+
+    Field names below match the real J-Grants public API response, confirmed
+    via curl against /exp/v1/public/subsidies: ``id``, ``title``,
+    ``acceptance_start_datetime``, ``acceptance_end_datetime``.  The list
+    response has no ``url`` or description-like field, so the detail-page
+    URL is constructed from ``id`` against the public portal domain, and
+    description is left as None.
+    """
+    subsidy_id = str(item.get("id") or "").strip()
+    title = str(item.get("title") or "").strip()
+    if not title or not subsidy_id:
         return None
 
-    detail_url = str(item.get("url") or item.get("detailUrl") or "").strip()
-    if not detail_url:
-        # Construct from id if no URL provided
-        if not subsidy_id:
-            return None
-        detail_url = f"{BASE_URL}/subsidies/{subsidy_id}"
+    detail_url = f"{PUBLIC_BASE_URL}/subsidy/{subsidy_id}"
 
-    if not detail_url.startswith(("http://", "https://")):
-        detail_url = f"https://{ALLOWED_HOST}{detail_url}"
-
-    # Validate the response-derived URL before use
+    # Validate the constructed URL against the public-portal allowlist.
+    # This is intentionally a separate check from _assert_allowed_url /
+    # ALLOWED_HOST, which governs outbound requests to the API host.
     parsed = urlparse(detail_url)
     if (
         parsed.scheme != "https"
-        or parsed.hostname != ALLOWED_HOST
+        or parsed.hostname != PUBLIC_HOST
         or parsed.port is not None
     ):
         logger.warning("jgrants: skipping URL outside allowlist: %s", detail_url)
         return None
 
-    description = str(item.get("targetDescription") or item.get("description") or "") or None
-    posted_raw = item.get("acceptStartDate") or item.get("postedDate")
-    deadline_raw = item.get("acceptEndDate") or item.get("deadline")
+    description = None  # not present in the list API response
+
+    posted_raw = item.get("acceptance_start_datetime")
+    deadline_raw = item.get("acceptance_end_datetime")
 
     return Tender(
         source="jgrants",
-        external_id=subsidy_id or None,
+        external_id=subsidy_id,
         title=title,
         url=detail_url,
         description=description,
