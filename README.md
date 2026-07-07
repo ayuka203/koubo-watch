@@ -8,6 +8,17 @@
 - キーワードカテゴリ分類（原子力・放射線・送配電）
 - SQLite DB 保存（SQLAlchemy 2.0 ORM）
 
+## 設計資産: Anthropic 構造化出力パターンの正典
+
+`src/classifier.py` は、本プロジェクト群における **Anthropic API 構造化出力の正典（reference implementation）** である。以降の他プロジェクト（reg-harness の `d1_citations.py` / `read_inbox.py` 等）は、このパターンを複製・移植して利用している。踏襲すべき要点:
+
+- `tools` + `tool_choice` による構造化出力（`output_config` は実在しないパラメータ。過去に本番障害を起こしたため使用禁止）
+- `system` パラメータでロールを固定し、入力由来のプロンプトインジェクションを防ぐ
+- `_sanitize_input()` による NFC 正規化・制御文字除去・注入パターン検知（日英両対応）
+- pydantic レスポンスモデル + `_fix_schema()`（`additionalProperties: false` の再帰付与）
+
+新規に Anthropic 連携を実装する際は、まず本ファイルを参照すること。
+
 ## セットアップ
 
 ```bash
