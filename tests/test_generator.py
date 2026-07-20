@@ -31,6 +31,7 @@ def _make_orm(
     energy_system_score: float | None = 8.0,
     ai_reason: str | None = "廃炉技術に直結",
     is_research: bool | None = True,
+    tender_type: str | None = "commissioned",
 ) -> SimpleNamespace:
     """Create a minimal duck-typed TenderORM-like object for generator tests.
 
@@ -54,6 +55,7 @@ def _make_orm(
         energy_system_score=energy_system_score,
         ai_reason=ai_reason,
         is_research=is_research,
+        tender_type=tender_type,
     )
 
 
@@ -217,6 +219,66 @@ def test_build_site_excludes_low_score_from_index(tmp_path):
 
     content = (tmp_path / "index.html").read_text(encoding="utf-8")
     assert "該当案件なし" in content
+
+
+def test_build_site_excludes_subsidy_from_index(tmp_path):
+    """tender_type='subsidy' should not appear in the active tab even with a
+    high score and a future deadline."""
+    subsidy = _make_orm(
+        id=1,
+        title="太陽光発電導入補助金",
+        deadline=date(2099, 12, 31),
+        energy_system_score=9.0,
+        tender_type="subsidy",
+    )
+    build_site(tmp_path, [subsidy])
+
+    content = (tmp_path / "index.html").read_text(encoding="utf-8")
+    assert "該当案件なし" in content
+
+
+def test_build_site_includes_commissioned_in_index(tmp_path):
+    commissioned = _make_orm(
+        id=1,
+        title="系統調査委託業務",
+        deadline=date(2099, 12, 31),
+        energy_system_score=9.0,
+        tender_type="commissioned",
+    )
+    build_site(tmp_path, [commissioned])
+
+    content = (tmp_path / "index.html").read_text(encoding="utf-8")
+    assert "系統調査委託業務" in content
+
+
+def test_build_site_includes_unknown_tender_type_in_index(tmp_path):
+    """tender_type='unknown' (未確定) must still be shown — fail-open."""
+    unknown = _make_orm(
+        id=1,
+        title="未確定案件",
+        deadline=date(2099, 12, 31),
+        energy_system_score=9.0,
+        tender_type="unknown",
+    )
+    build_site(tmp_path, [unknown])
+
+    content = (tmp_path / "index.html").read_text(encoding="utf-8")
+    assert "未確定案件" in content
+
+
+def test_build_site_includes_none_tender_type_in_index(tmp_path):
+    """tender_type=None (未移行の古い行) must still be shown — fail-open."""
+    legacy = _make_orm(
+        id=1,
+        title="旧データ案件",
+        deadline=date(2099, 12, 31),
+        energy_system_score=9.0,
+        tender_type=None,
+    )
+    build_site(tmp_path, [legacy])
+
+    content = (tmp_path / "index.html").read_text(encoding="utf-8")
+    assert "旧データ案件" in content
 
 
 def test_build_site_excludes_none_score_from_index(tmp_path):

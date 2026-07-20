@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date
+from typing import Literal
 
 from pydantic import BaseModel, HttpUrl, field_validator
 
@@ -17,6 +18,10 @@ class Tender(BaseModel):
     description: str | None = None
     posted_date: date | None = None
     deadline: date | None = None
+    # "commissioned" (受注型: 委託・調達・請負) | "subsidy" (助成型) | "unknown"
+    # (未確定). filter.pre_label_tender_type() が仮判定し、確定できなければ
+    # classifier.classify_tender() の AI 判定で上書きされる（2026-07-20 Fable裁定）。
+    tender_type: Literal["commissioned", "subsidy", "unknown"] = "unknown"
 
     @field_validator("source")
     @classmethod

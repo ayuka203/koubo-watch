@@ -220,6 +220,31 @@ def fetch_recent(
     -------
     list[Tender]
         Deduplicated, parsed tender objects; at most *limit* entries.
+
+    .. warning::
+        **無効化済み（2026-07-20 Fable裁定）**。このフェッチャーが叩く
+        ``/exp/v1/public/subsidies`` は補助金専用 API であり、koubo-watch は
+        受注型（委託・調達）案件に特化する方針となったため、常に空リストを
+        返す。実装は削除せず残してある — 補助金情報を扱う別プロジェクト/
+        別モードが将来必要になった場合に再利用できるようにするため。
+    """
+    logger.warning(
+        "%s: jgrants フェッチャーは無効化されています（補助金専用APIのため、"
+        "2026-07-20 Fable裁定により受注型案件に特化する方針に伴い停止）。"
+        "空リストを返します。",
+        __name__,
+    )
+    return []
+
+
+def _fetch_recent_impl(
+    since: date | None = None,
+    limit: int = 100,
+    keywords: list[str] | None = None,
+) -> list[Tender]:
+    """旧 fetch_recent() の実装本体（無効化前）。将来の再利用のために残置。
+
+    現在はどこからも呼び出されていない。
     """
     if limit <= 0:
         raise ValueError(f"limit must be > 0, got {limit}")

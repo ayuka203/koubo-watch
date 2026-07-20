@@ -208,7 +208,7 @@ def test_classify_pending_calls_ai_for_null_score(tmp_path):
         db_upsert(sess, t, {"原子力": ["廃炉・廃棄物"]})
 
     mock_assessment = TenderAssessment(
-        energy_system_score=7, reason="関連あり", is_research=False
+        energy_system_score=7, reason="関連あり", is_research=False, tender_type="commissioned"
     )
 
     with patch("src.classifier.classify_tender", return_value=mock_assessment) as mock_ai, \
@@ -314,7 +314,7 @@ def test_max_tenders_limits_processing(tmp_path):
 
     processed_urls = []
 
-    def mock_upsert(sess, tender, cats):
+    def mock_upsert(sess, tender, cats, tender_type=None):
         processed_urls.append(tender.url)
         return _make_ns(id=len(processed_urls), url=tender.url)
 
@@ -504,3 +504,101 @@ def test_no_category_counter_zero_when_all_match(tmp_path, capsys):
     assert "カテゴリなし:     0" in captured.err
     # No examples block should appear
     assert "例:" not in captured.err
+
+
+# ---------------------------------------------------------------------------
+# pre-label subsidy must not skip AI (security監査 MEDIUM対応、案A)
+# ---------------------------------------------------------------------------
+
+
+def test_pre_label_subsidy_still_calls_ai(tmp_path):
+    """pre_label が 'subsidy' でも、AI 判定(classify_tender)は呼び出される。
+
+    以前は pre_label=='subsidy' の場合 AI 呼び出し自体をスキップしていたが、
+    pre-label はキーワード単一シグナルの仮判定に過ぎず誤判定の訂正機会が
+    無くなるため(security監査 MEDIUM)、AI による再確認を必ず行うよう変更した。
+    """
+    from src.db import init_db
+    from src.models import Tender as TenderSchema
+
+    init_db()
+
+    tender = TenderSchema(
+        source="jst",
+        title="支援金交付事務局運営委託",
+        url="https://choutatsu.jst.go.jp/test/pre-label-subsidy",
+    )
+
+    from src.classifier import TenderAssessment
+
+    mock_assessment = TenderAssessment(
+        energy_system_score=5, reason="確認済み", is_research=False, tender_type="subsidy"
+    )
+
+    with patch("src.main.jst_fetch", return_value=[tender]), \
+         patch("src.main.mext_fetch", return_value=[]), \
+         patch("src.main.nedo_fetch", return_value=[]), \
+         patch("src.main.jgrants_fetch", return_value=[]), \
+         patch("src.main.load_keywords",
+               return_value={"原子力": {"廃炉・廃棄物": ["廃炉"]}, "exclude": []}), \
+         patch("src.main.is_excluded", return_value=False), \
+         patch("src.main.classify", return_value={"原子力": ["廃炉・廃棄物"]}), \
+         patch("src.main.pre_label_tender_type", return_value="subsidy"), \
+         patch("src.classifier.classify_tender", return_value=mock_assessment) as mock_ai, \
+         patch("src.main.build_site"), \
+         patch("src.main.PUBLIC_DIR", tmp_path / "public"):
+
+        sys.argv = ["main"]
+        from src.main import main
+        result = main()
+
+    assert result == 0
+    mock_ai.assert_called_once()
+
+
+def test_pre_label_subsidy_ai_can_override_to_commissioned(tmp_path):
+    """pre_label='subsidy' でも AI が commissioned と判定すれば tender_type は上書きされる。
+
+    pre-label 段階の誤判定(subsidy固定化による永久非表示)から自己修正できることを
+    確認する回帰テスト。
+    """
+    from src.db import TenderORM, get_session, init_db
+    from src.models import Tender as TenderSchema
+
+    init_db()
+
+    tender = TenderSchema(
+        source="jst",
+        title="廃炉技術の研究開発（支援金申請事務あり）",
+        url="https://choutatsu.jst.go.jp/test/pre-label-override",
+    )
+
+    from src.classifier import TenderAssessment
+
+    mock_assessment = TenderAssessment(
+        energy_system_score=8, reason="実際は受注型案件", is_research=False,
+        tender_type="commissioned",
+    )
+
+    with patch("src.main.jst_fetch", return_value=[tender]), \
+         patch("src.main.mext_fetch", return_value=[]), \
+         patch("src.main.nedo_fetch", return_value=[]), \
+         patch("src.main.jgrants_fetch", return_value=[]), \
+         patch("src.main.load_keywords",
+               return_value={"原子力": {"廃炉・廃棄物": ["廃炉"]}, "exclude": []}), \
+         patch("src.main.is_excluded", return_value=False), \
+         patch("src.main.classify", return_value={"原子力": ["廃炉・廃棄物"]}), \
+         patch("src.main.pre_label_tender_type", return_value="subsidy"), \
+         patch("src.classifier.classify_tender", return_value=mock_assessment), \
+         patch("src.main.build_site"), \
+         patch("src.main.PUBLIC_DIR", tmp_path / "public"):
+
+        sys.argv = ["main"]
+        from src.main import main
+        result = main()
+
+    assert result == 0
+
+    with get_session() as sess:
+        row = sess.query(TenderORM).filter_by(url=tender.url).first()
+        assert row.tender_type == "commissioned"

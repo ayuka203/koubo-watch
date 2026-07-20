@@ -27,7 +27,7 @@ _DATA_SOURCES: list[dict[str, str]] = [
     {
         "name": "Jグランツ（補助金電子申請）",
         "url": "https://www.jgrants-portal.go.jp/",
-        "note": "中央政府の統合補助金ポータル",
+        "note": "中央政府の統合補助金ポータル（補助金専用APIのため自動収集を停止中）",
     },
     {
         "name": "NEDO 公募",
@@ -42,7 +42,7 @@ _DATA_SOURCES: list[dict[str, str]] = [
     {
         "name": "JST 調達情報",
         "url": "https://choutatsu.jst.go.jp/",
-        "note": "科学技術振興機構（一時的に自動収集を停止中）",
+        "note": "科学技術振興機構",
     },
 ]
 
@@ -120,6 +120,11 @@ def build_site(out_dir: Path, tenders: list[TenderORM]) -> None:
             return False
         score = t.energy_system_score
         if score is None or score < 5:
+            return False
+        # 助成型（subsidy）は表示対象外。tender_type が None/unknown/commissioned
+        # の場合は fail-open で表示する（誤って除外するより誤って表示する方が害が
+        # 少ないため）。
+        if t.tender_type == "subsidy":
             return False
         return True
 

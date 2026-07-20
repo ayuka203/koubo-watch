@@ -7,3 +7,4 @@ public/
 .claude/
 # data/koubo.sqlite is intentionally NOT ignored (state persists via git)
 data/state.json
+data/test_*.sqlite

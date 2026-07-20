@@ -17,6 +17,7 @@ from src.fetchers.jgrants import (
     _DEFAULT_KEYWORDS,
     _SUBSIDIES_PATH,
     _assert_allowed_url,
+    _fetch_recent_impl,
     _item_to_tender,
     _parse_date,
     fetch_recent,
@@ -172,7 +173,7 @@ def test_fetch_recent_required_params_present():
         return httpx.Response(200, json={"result": []})
 
     respx.get(BASE_URL + _SUBSIDIES_PATH).mock(side_effect=handler)
-    fetch_recent(keywords=["電力"])
+    _fetch_recent_impl(keywords=["電力"])
 
     assert len(captured_requests) == 1
     from urllib.parse import parse_qs, urlparse
@@ -199,7 +200,7 @@ def test_fetch_recent_keyword_sent_per_query():
 
     respx.get(BASE_URL + _SUBSIDIES_PATH).mock(side_effect=handler)
     keywords = ["電力", "原子力", "水素"]
-    fetch_recent(keywords=keywords)
+    _fetch_recent_impl(keywords=keywords)
 
     assert set(captured_keywords) == set(keywords)
 
@@ -215,7 +216,7 @@ def test_fetch_recent_union_deduplication():
         return httpx.Response(200, json=sample)
 
     respx.get(BASE_URL + _SUBSIDIES_PATH).mock(side_effect=handler)
-    tenders = fetch_recent(keywords=["電力", "原子力", "水素"])
+    tenders = _fetch_recent_impl(keywords=["電力", "原子力", "水素"])
 
     # Only 3 unique items despite 3 queries each returning 3 items
     assert len(tenders) == 3
@@ -247,7 +248,7 @@ def test_fetch_recent_limit_respected():
         return resp
 
     respx.get(BASE_URL + _SUBSIDIES_PATH).mock(side_effect=handler)
-    tenders = fetch_recent(keywords=["電力", "原子力", "水素"], limit=4)
+    tenders = _fetch_recent_impl(keywords=["電力", "原子力", "水素"], limit=4)
 
     assert len(tenders) <= 4
 
@@ -276,7 +277,7 @@ def test_fetch_recent_http400_skips_keyword_continues():
         )
 
     respx.get(BASE_URL + _SUBSIDIES_PATH).mock(side_effect=handler)
-    tenders = fetch_recent(keywords=["エラーキーワード", "電力"])
+    tenders = _fetch_recent_impl(keywords=["エラーキーワード", "電力"])
 
     # The second keyword should yield 1 result; the first was skipped
     assert len(tenders) >= 1
@@ -286,7 +287,7 @@ def test_fetch_recent_http400_skips_keyword_continues():
 def test_fetch_recent_all_keywords_fail_returns_empty():
     """If all keyword requests fail, return empty list (no exception raised)."""
     respx.get(BASE_URL + _SUBSIDIES_PATH).mock(return_value=httpx.Response(400))
-    tenders = fetch_recent(keywords=["電力"])
+    tenders = _fetch_recent_impl(keywords=["電力"])
     assert tenders == []
 
 
@@ -296,7 +297,7 @@ def test_fetch_recent_parses_all_items():
     respx.get(BASE_URL + _SUBSIDIES_PATH).mock(
         return_value=httpx.Response(200, json=sample)
     )
-    tenders = fetch_recent(keywords=["電力"], limit=100)
+    tenders = _fetch_recent_impl(keywords=["電力"], limit=100)
     assert len(tenders) == 3
     sources = {t.source for t in tenders}
     assert sources == {"jgrants"}
@@ -308,7 +309,7 @@ def test_fetch_recent_returns_tender_objects():
     respx.get(BASE_URL + _SUBSIDIES_PATH).mock(
         return_value=httpx.Response(200, json=sample)
     )
-    tenders = fetch_recent(keywords=["電力"], limit=100)
+    tenders = _fetch_recent_impl(keywords=["電力"], limit=100)
     from src.models import Tender
 
     assert all(isinstance(t, Tender) for t in tenders)
@@ -322,7 +323,7 @@ def test_fetch_recent_urls_point_to_public_portal():
     respx.get(BASE_URL + _SUBSIDIES_PATH).mock(
         return_value=httpx.Response(200, json=sample)
     )
-    tenders = fetch_recent(keywords=["電力"], limit=100)
+    tenders = _fetch_recent_impl(keywords=["電力"], limit=100)
     assert len(tenders) == 3
     for t in tenders:
         assert str(t.url).startswith(f"https://{PUBLIC_HOST}/subsidy/")
@@ -334,7 +335,7 @@ def test_fetch_recent_respects_limit():
     respx.get(BASE_URL + _SUBSIDIES_PATH).mock(
         return_value=httpx.Response(200, json=sample)
     )
-    tenders = fetch_recent(keywords=["電力"], limit=1)
+    tenders = _fetch_recent_impl(keywords=["電力"], limit=1)
     assert len(tenders) <= 1
 
 
@@ -343,7 +344,7 @@ def test_fetch_recent_5xx_warns_and_skips_keyword():
     """5xx errors (after retries) for a keyword are logged and skipped."""
     respx.get(BASE_URL + _SUBSIDIES_PATH).mock(return_value=httpx.Response(503))
     # Should not raise; all keywords will fail and be skipped
-    tenders = fetch_recent(keywords=["電力"])
+    tenders = _fetch_recent_impl(keywords=["電力"])
     assert tenders == []
 
 
@@ -352,20 +353,55 @@ def test_fetch_recent_empty_response():
     respx.get(BASE_URL + _SUBSIDIES_PATH).mock(
         return_value=httpx.Response(200, json={"result": []})
     )
-    tenders = fetch_recent(keywords=["電力"])
+    tenders = _fetch_recent_impl(keywords=["電力"])
     assert tenders == []
 
 
 def test_fetch_recent_invalid_limit():
     with pytest.raises(ValueError, match="limit must be > 0"):
-        fetch_recent(limit=0)
+        _fetch_recent_impl(limit=0)
 
 
 def test_fetch_recent_negative_limit():
     with pytest.raises(ValueError, match="limit must be > 0"):
-        fetch_recent(limit=-5)
+        _fetch_recent_impl(limit=-5)
 
 
 def test_default_keywords_non_empty():
     """_DEFAULT_KEYWORDS must be non-empty so fetch_recent has something to query."""
     assert len(_DEFAULT_KEYWORDS) > 0
+
+
+# ---------------------------------------------------------------------------
+# fetch_recent — disabled (2026-07-20 Fable裁定: 補助金専用APIのため停止)
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_recent_disabled_returns_empty_list():
+    """fetch_recent() is disabled and must always return [] without any HTTP call."""
+    assert fetch_recent() == []
+
+
+def test_fetch_recent_disabled_ignores_arguments():
+    """Even with keywords/limit/since supplied, the disabled fetcher returns []."""
+    assert fetch_recent(keywords=["電力"], limit=5) == []
+
+
+def test_fetch_recent_disabled_emits_warning(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="src.fetchers.jgrants"):
+        fetch_recent()
+
+    assert any(
+        "無効化" in r.message for r in caplog.records
+    ), "Expected a warning log containing '無効化'"
+
+
+def test_fetch_recent_disabled_makes_no_http_request():
+    """Regression: no network call must occur — respx with no routes registered
+    will raise on any unmocked request, so a clean call proves this."""
+    with respx.mock:
+        # No routes registered; any HTTP request would raise.
+        result = fetch_recent()
+    assert result == []

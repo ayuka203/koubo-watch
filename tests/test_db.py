@@ -293,6 +293,87 @@ def test_db_path_traversal_rejected(tmp_path, monkeypatch):
     db_module._SessionLocal = None
 
 
+# ---------------------------------------------------------------------------
+# migrate_add_tender_type — idempotency
+# ---------------------------------------------------------------------------
+
+
+def test_migrate_add_tender_type_idempotent(reset_engine):
+    """Running the migration twice must not raise and must leave a usable column."""
+    from sqlalchemy import text
+
+    from src.db import get_engine, init_db, migrate_add_tender_type
+
+    init_db()  # already runs the migration once internally
+    migrate_add_tender_type()  # second explicit call must be a no-op, not an error
+    migrate_add_tender_type()  # third call, for good measure
+
+    engine = get_engine()
+    with engine.connect() as conn:
+        result = conn.execute(text("PRAGMA table_info(tenders)"))
+        columns = {row[1] for row in result}
+    assert "tender_type" in columns
+
+
+def test_migrate_add_tender_type_default_value(session):
+    """New rows inserted via upsert_tender without an explicit tender_type
+    default to 'unknown'."""
+    from src.db import upsert_tender
+
+    tender = _make_tender()
+    row = upsert_tender(session, tender, {})
+    assert row.tender_type == "unknown"
+
+
+# ---------------------------------------------------------------------------
+# upsert_tender — tender_type
+# ---------------------------------------------------------------------------
+
+
+def test_upsert_tender_type_explicit_on_insert(session):
+    from src.db import upsert_tender
+
+    tender = _make_tender()
+    row = upsert_tender(session, tender, {}, tender_type="commissioned")
+    assert row.tender_type == "commissioned"
+
+
+def test_upsert_tender_type_from_schema_field(session):
+    """If tender_type kwarg is omitted, tender_in.tender_type is used."""
+    from src.db import upsert_tender
+
+    tender = _make_tender(tender_type="subsidy")
+    row = upsert_tender(session, tender, {})
+    assert row.tender_type == "subsidy"
+
+
+def test_upsert_tender_type_confirmed_value_not_downgraded_by_unknown(session):
+    """A previously-confirmed tender_type must not be reset to 'unknown' by a
+    later upsert that only has an unconfirmed pre-label."""
+    from src.db import upsert_tender
+
+    tender = _make_tender()
+    upsert_tender(session, tender, {}, tender_type="commissioned")
+
+    # Re-upsert (e.g. next day's fetch cycle) with an unconfirmed pre-label
+    updated = _make_tender(title="タイトル更新")
+    row = upsert_tender(session, updated, {}, tender_type="unknown")
+
+    assert row.tender_type == "commissioned"
+    assert row.title == "タイトル更新"  # other fields still refresh normally
+
+
+def test_upsert_tender_type_confirmed_value_can_upgrade_from_unknown(session):
+    """An unconfirmed tender_type can be upgraded to a confirmed one on update."""
+    from src.db import upsert_tender
+
+    tender = _make_tender()
+    upsert_tender(session, tender, {}, tender_type="unknown")
+
+    row = upsert_tender(session, tender, {}, tender_type="subsidy")
+    assert row.tender_type == "subsidy"
+
+
 def test_db_path_within_data_allowed(tmp_path, monkeypatch):
     """KOUBO_DB_PATH inside project data/ resolves without error."""
     import src.db as db_module

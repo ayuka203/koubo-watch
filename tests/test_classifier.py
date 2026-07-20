@@ -40,10 +40,20 @@ class _MockResponse:
         self.content = [_MockToolUse(input_data)]
 
 
-def _make_mock_response(score: int, reason: str, is_research: bool) -> _MockResponse:
+def _make_mock_response(
+    score: int,
+    reason: str,
+    is_research: bool,
+    tender_type: str = "unknown",
+) -> _MockResponse:
     """Return a mock Anthropic response with the given assessment fields."""
     return _MockResponse(
-        {"energy_system_score": score, "reason": reason, "is_research": is_research}
+        {
+            "energy_system_score": score,
+            "reason": reason,
+            "is_research": is_research,
+            "tender_type": tender_type,
+        }
     )
 
 
@@ -53,26 +63,45 @@ def _make_mock_response(score: int, reason: str, is_research: bool) -> _MockResp
 
 
 def test_tender_assessment_valid():
-    ta = TenderAssessment(energy_system_score=7, reason="関連技術", is_research=True)
+    ta = TenderAssessment(
+        energy_system_score=7, reason="関連技術", is_research=True, tender_type="commissioned"
+    )
     assert ta.energy_system_score == 7
     assert ta.is_research is True
+    assert ta.tender_type == "commissioned"
 
 
 def test_tender_assessment_score_bounds():
-    ta_min = TenderAssessment(energy_system_score=0, reason="", is_research=False)
-    ta_max = TenderAssessment(energy_system_score=10, reason="", is_research=False)
+    ta_min = TenderAssessment(
+        energy_system_score=0, reason="", is_research=False, tender_type="unknown"
+    )
+    ta_max = TenderAssessment(
+        energy_system_score=10, reason="", is_research=False, tender_type="unknown"
+    )
     assert ta_min.energy_system_score == 0
     assert ta_max.energy_system_score == 10
 
 
 def test_tender_assessment_score_out_of_range_low():
     with pytest.raises(ValidationError):
-        TenderAssessment(energy_system_score=-1, reason="", is_research=False)
+        TenderAssessment(
+            energy_system_score=-1, reason="", is_research=False, tender_type="unknown"
+        )
 
 
 def test_tender_assessment_score_out_of_range_high():
     with pytest.raises(ValidationError):
-        TenderAssessment(energy_system_score=11, reason="", is_research=False)
+        TenderAssessment(
+            energy_system_score=11, reason="", is_research=False, tender_type="unknown"
+        )
+
+
+def test_tender_assessment_invalid_tender_type_rejected():
+    """tender_type must be one of the three allowed literal values."""
+    with pytest.raises(ValidationError):
+        TenderAssessment(
+            energy_system_score=5, reason="", is_research=False, tender_type="grant"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -192,7 +221,7 @@ def test_get_client_returns_client_with_api_key(monkeypatch):
 
 
 def test_classify_tender_happy_path(monkeypatch):
-    mock_resp = _make_mock_response(8, "市場制度設計に直接関連", True)
+    mock_resp = _make_mock_response(8, "市場制度設計に直接関連", True, tender_type="commissioned")
     mock_client = MagicMock()
     mock_client.messages.create.return_value = mock_resp
 
@@ -205,7 +234,52 @@ def test_classify_tender_happy_path(monkeypatch):
     assert result.energy_system_score == 8
     assert result.reason == "市場制度設計に直接関連"
     assert result.is_research is True
+    assert result.tender_type == "commissioned"
     get_client.cache_clear()
+
+
+def test_classify_tender_tender_type_subsidy(monkeypatch):
+    mock_resp = _make_mock_response(2, "助成型の案件", False, tender_type="subsidy")
+    mock_client = MagicMock()
+    mock_client.messages.create.return_value = mock_resp
+
+    with patch("src.classifier.get_client", return_value=mock_client):
+        result = classify_tender("再エネ導入補助金", "申請者の事業に交付")
+
+    assert result.tender_type == "subsidy"
+
+
+def test_classify_tender_tender_type_missing_falls_back_to_unknown(monkeypatch):
+    """AI応答に tender_type が欠落していても、他フィールドが有効なら
+    tender_type='unknown' にフォールバックして救済する（例外にしない）。"""
+    resp = _MockResponse({"energy_system_score": 6, "reason": "根拠", "is_research": True})
+    mock_client = MagicMock()
+    mock_client.messages.create.return_value = resp
+
+    with patch("src.classifier.get_client", return_value=mock_client):
+        result = classify_tender("タイトル", "説明")
+
+    assert result.energy_system_score == 6
+    assert result.tender_type == "unknown"
+
+
+def test_classify_tender_tender_type_invalid_value_falls_back_to_unknown(monkeypatch):
+    """tender_type に許容外の値が返っても unknown にフォールバックする。"""
+    resp = _MockResponse(
+        {
+            "energy_system_score": 4,
+            "reason": "根拠",
+            "is_research": False,
+            "tender_type": "grant",  # not a valid Literal value
+        }
+    )
+    mock_client = MagicMock()
+    mock_client.messages.create.return_value = resp
+
+    with patch("src.classifier.get_client", return_value=mock_client):
+        result = classify_tender("タイトル", "説明")
+
+    assert result.tender_type == "unknown"
 
 
 def test_classify_tender_score_zero(monkeypatch):
@@ -371,6 +445,7 @@ def test_tender_assessment_reason_too_long():
             energy_system_score=5,
             reason="あ" * 201,
             is_research=False,
+            tender_type="unknown",
         )
 
 
@@ -380,6 +455,7 @@ def test_tender_assessment_reason_at_limit():
         energy_system_score=5,
         reason="あ" * 200,
         is_research=False,
+        tender_type="unknown",
     )
     assert len(ta.reason) == 200
 

@@ -24,7 +24,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from src.db import TenderORM, get_session, init_db, upsert_tender
-from src.filter import classify, is_excluded, load_keywords
+from src.filter import classify, is_excluded, load_keywords, pre_label_tender_type
 from src.fetchers.jst import fetch_recent as jst_fetch
 from src.fetchers.mext import fetch_recent as mext_fetch
 from src.fetchers.nedo import fetch_recent as nedo_fetch
@@ -125,6 +125,10 @@ def main() -> int:
         "ai_classified": 0,
         "ai_skipped": 0,
         "failed": 0,
+        # tender_type pre-labelling (filter.pre_label_tender_type の結果内訳)
+        "tender_type_subsidy_pre_labeled": 0,  # 助成型と確定 → AI呼び出し自体をスキップ
+        "tender_type_commissioned_pre_labeled": 0,  # 受注型と確定 → スコアのみ AI 算出
+        "tender_type_unknown_pre_labeled": 0,  # 未確定 → AI が tender_type も含め確定
     }
     no_category_examples: list[str] = []
 
@@ -198,9 +202,18 @@ def main() -> int:
                     stats["no_category"] += 1
                     continue
 
-                # DB 投入
+                # tender_type 事前ラベリング（キーワードシグナルによる仮判定）
+                pre_label = pre_label_tender_type(tender.title, tender.description, keywords)
+                if pre_label == "subsidy":
+                    stats["tender_type_subsidy_pre_labeled"] += 1
+                elif pre_label == "commissioned":
+                    stats["tender_type_commissioned_pre_labeled"] += 1
+                else:
+                    stats["tender_type_unknown_pre_labeled"] += 1
+
+                # DB 投入（pre_label を仮の tender_type として保存）
                 with get_session() as sess:
-                    row = upsert_tender(sess, tender, categories)
+                    row = upsert_tender(sess, tender, categories, tender_type=pre_label)
                     tender_id = row.id
 
                 stats["upserted"] += 1
@@ -210,6 +223,18 @@ def main() -> int:
                     stats["ai_skipped"] += 1
                     continue
 
+                # pre_label が "subsidy" でも AI 判定はスキップしない(security監査
+                # MEDIUM対応、案A採用)。理由: pre-label はキーワード単一シグナルの
+                # 仮判定に過ぎず、"支援金"等の広めの語が commissioned 案件の説明文に
+                # 混ざるだけで subsidy に確定してしまう。以前はここで AI 呼び出し
+                # 自体をスキップしていたため、pre-label 側の誤判定を訂正する機会が
+                # 一切なく永久に非表示になるリスクがあった（"unknown 巻き戻り防止"
+                # とは逆に、"subsidy 固定化" が過剰保護になっていた）。
+                # commissioned/unknown は元々 AI 呼び出し必須だったので、この変更で
+                # 追加コストが発生するのは pre-label subsidy 分のみ（母数は少ない
+                # 想定）。案B(内部的に unknown のまま残し表示のみ抑制)は、
+                # generator._is_active の判定ロジックに tender_type 以外の抑制フラグ
+                # を追加する必要があり設計変更が大きいため見送った。
                 _run_ai_for_id(tender_id, stats)
 
             except Exception as exc:
@@ -242,6 +267,13 @@ def main() -> int:
             for t in no_category_examples[:3]:
                 print(f"      - {t[:80]}", file=sys.stderr)
         print(f"  DB 投入:         {stats['upserted']}", file=sys.stderr)
+        print(
+            f"  tender_type 仮判定: "
+            f"subsidy={stats['tender_type_subsidy_pre_labeled']} "
+            f"commissioned={stats['tender_type_commissioned_pre_labeled']} "
+            f"unknown={stats['tender_type_unknown_pre_labeled']}",
+            file=sys.stderr,
+        )
         print(f"  AI 判定:         {stats['ai_classified']}", file=sys.stderr)
         print(f"  AI スキップ:      {stats['ai_skipped']}", file=sys.stderr)
         print(f"  失敗:            {stats['failed']}", file=sys.stderr)
@@ -281,6 +313,11 @@ def _run_ai_for_id(tender_id: int, stats: dict) -> None:
         row.energy_system_score = float(assessment.energy_system_score)
         row.ai_reason = assessment.reason
         row.is_research = assessment.is_research
+        # tender_type: AI が確定判定 (commissioned/subsidy) を返した場合のみ上書き。
+        # AI が "unknown" を返した場合、pre_label 由来の既存の確定値
+        # (commissioned/subsidy) を unknown で書き潰さない。
+        if assessment.tender_type != "unknown":
+            row.tender_type = assessment.tender_type
 
     stats["ai_classified"] += 1
     logger.info(

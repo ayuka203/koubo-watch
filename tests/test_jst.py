@@ -1,7 +1,15 @@
-"""Tests for src/fetchers/jst.py — offline using respx."""
+"""Tests for src/fetchers/jst.py — offline using respx.
+
+The JST fetcher was rewritten (2026-07-20) from RSS parsing to HTML
+scraping, since choutatsu.jst.go.jp's RSS feed is defunct (robots.txt
+disallows /rss/, the real feed URL 404s). It now scrapes
+koukoku_link.html for a listing, then fetches each detail page directly by
+constructing its clean URL from the listing href.
+"""
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 import httpx
@@ -10,14 +18,22 @@ import respx
 
 from src.fetchers.jst import (
     ALLOWED_HOST,
-    RSS_URL,
+    BASE_URL,
+    LISTING_PATH,
     _assert_allowed_url,
-    _parse_feed,
-    _struct_time_to_date,
+    _clean_detail_url,
+    _extract_dd_text,
+    _parse_detail,
+    _parse_listing,
+    _parse_wareki_date,
     fetch_recent,
 )
+from bs4 import BeautifulSoup
 
-FIXTURE_PATH = Path(__file__).parent / "fixtures" / "jst_sample.xml"
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
+LISTING_FIXTURE = FIXTURES_DIR / "jst_listing_sample.html"
+DETAIL_FIXTURE = FIXTURES_DIR / "jst_detail_sample.html"
+DETAIL_NO_DATES_FIXTURE = FIXTURES_DIR / "jst_detail_no_dates_sample.html"
 
 
 # ---------------------------------------------------------------------------
@@ -26,240 +42,249 @@ FIXTURE_PATH = Path(__file__).parent / "fixtures" / "jst_sample.xml"
 
 
 def test_allowed_url_passes():
-    _assert_allowed_url(RSS_URL)
+    _assert_allowed_url(f"https://{ALLOWED_HOST}/koukoku_link.html")
 
 
 def test_disallowed_url_raises():
     with pytest.raises(ValueError, match="SSRF guard"):
-        _assert_allowed_url("https://evil.example.com/rss")
+        _assert_allowed_url("https://evil.example.com/koukoku_link.html")
 
 
 def test_http_scheme_rejected():
     with pytest.raises(ValueError, match="Non-HTTPS scheme rejected"):
-        _assert_allowed_url(f"http://{ALLOWED_HOST}/rss.php")
+        _assert_allowed_url(f"http://{ALLOWED_HOST}/koukoku_link.html")
 
 
 def test_non_default_port_rejected():
     with pytest.raises(ValueError, match="Non-default port rejected"):
-        _assert_allowed_url(f"https://{ALLOWED_HOST}:8443/rss.php")
+        _assert_allowed_url(f"https://{ALLOWED_HOST}:8443/koukoku_link.html")
 
 
 # ---------------------------------------------------------------------------
-# _struct_time_to_date
+# _clean_detail_url
 # ---------------------------------------------------------------------------
 
 
-def test_struct_time_to_date_none():
-    assert _struct_time_to_date(None) is None
+def test_clean_detail_url_basic():
+    assert (
+        _clean_detail_url("kankouju/47_2026_16.html")
+        == f"{BASE_URL}/47-2026-16"
+    )
 
 
-def test_struct_time_to_date_valid():
-    from datetime import date
+def test_clean_detail_url_different_numbers():
+    assert (
+        _clean_detail_url("kankouju/22_2026_11.html")
+        == f"{BASE_URL}/22-2026-11"
+    )
 
-    st = (2024, 4, 1, 9, 0, 0, 0, 91, 0)
-    assert _struct_time_to_date(st) == date(2024, 4, 1)
 
-
-def test_struct_time_to_date_invalid():
-    assert _struct_time_to_date("not-a-struct") is None
+def test_clean_detail_url_no_match_returns_none():
+    assert _clean_detail_url("/") is None
+    assert _clean_detail_url("https://external.example.com/koukoku") is None
+    assert _clean_detail_url("mailmaga/index.html") is None
 
 
 # ---------------------------------------------------------------------------
-# _parse_feed — accepts bytes
+# _parse_wareki_date
+# ---------------------------------------------------------------------------
+
+
+def test_parse_wareki_date_reiwa_fullwidth():
+    assert _parse_wareki_date("令和８年７月１７日(金)") == date(2026, 7, 17)
+
+
+def test_parse_wareki_date_reiwa_with_time_suffix():
+    assert _parse_wareki_date("令和８年８月６日(木)　１３時００分　まで") == date(
+        2026, 8, 6
+    )
+
+
+def test_parse_wareki_date_heisei():
+    assert _parse_wareki_date("平成３１年４月１日") == date(2019, 4, 1)
+
+
+def test_parse_wareki_date_no_match_returns_none():
+    assert _parse_wareki_date("実施しない") is None
+
+
+def test_parse_wareki_date_empty_returns_none():
+    assert _parse_wareki_date("") is None
+    assert _parse_wareki_date(None) is None
+
+
+def test_parse_wareki_date_invalid_day_returns_none():
+    # There is no 令和8年2月30日
+    assert _parse_wareki_date("令和８年２月３０日") is None
+
+
+# ---------------------------------------------------------------------------
+# _parse_listing
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture
-def fixture_bytes():
-    return FIXTURE_PATH.read_bytes()
+def listing_html():
+    return LISTING_FIXTURE.read_text(encoding="utf-8")
+
+
+def test_parse_listing_returns_items(listing_html):
+    items = _parse_listing(listing_html)
+    assert len(items) == 3
+
+
+def test_parse_listing_urls_are_clean(listing_html):
+    items = _parse_listing(listing_html)
+    urls = [url for url, _ in items]
+    assert f"{BASE_URL}/47-2026-16" in urls
+    assert f"{BASE_URL}/47-2026-17" in urls
+    assert f"{BASE_URL}/46-2026-81" in urls
+
+
+def test_parse_listing_titles_not_empty(listing_html):
+    items = _parse_listing(listing_html)
+    for _, title in items:
+        assert title.strip() != ""
+
+
+def test_parse_listing_ignores_non_kankouju_links(listing_html):
+    items = _parse_listing(listing_html)
+    urls = [url for url, _ in items]
+    assert not any("external.example.com" in u for u in urls)
+    assert len(urls) == 3  # "/" and the external link are excluded
+
+
+def test_parse_listing_no_duplicate_urls(listing_html):
+    items = _parse_listing(listing_html)
+    urls = [url for url, _ in items]
+    assert len(urls) == len(set(urls))
+
+
+def test_parse_listing_empty_html():
+    assert _parse_listing("<html><body></body></html>") == []
+
+
+# ---------------------------------------------------------------------------
+# _extract_dd_text
+# ---------------------------------------------------------------------------
 
 
 @pytest.fixture
-def fixture_xml():
-    return FIXTURE_PATH.read_text(encoding="utf-8")
+def detail_soup():
+    return BeautifulSoup(DETAIL_FIXTURE.read_text(encoding="utf-8"), "html.parser")
 
 
-def test_parse_feed_returns_list_bytes(fixture_bytes):
-    tenders = _parse_feed(fixture_bytes)
-    assert isinstance(tenders, list)
+def test_extract_dd_text_first_match(detail_soup):
+    assert _extract_dd_text(detail_soup, "公告日") == "令和８年７月１７日(金)"
 
 
-def test_parse_feed_returns_list(fixture_xml):
-    tenders = _parse_feed(fixture_xml)
-    assert isinstance(tenders, list)
+def test_extract_dd_text_last_match_of_multiple(detail_soup):
+    # There are three "期限" dt/dd pairs; last=True should return the final one.
+    text = _extract_dd_text(detail_soup, "期限", last=True)
+    assert "令和８年８月６日" in text
 
 
-def test_parse_feed_counts(fixture_xml):
-    tenders = _parse_feed(fixture_xml)
-    # 3 items in fixture
+def test_extract_dd_text_first_match_of_multiple(detail_soup):
+    # Without last=True, the first "期限" (質問書提出期限) is returned.
+    text = _extract_dd_text(detail_soup, "期限", last=False)
+    assert "令和８年７月２７日" in text
+
+
+def test_extract_dd_text_no_match_returns_none(detail_soup):
+    assert _extract_dd_text(detail_soup, "存在しない項目") is None
+
+
+# ---------------------------------------------------------------------------
+# _parse_detail
+# ---------------------------------------------------------------------------
+
+
+def test_parse_detail_basic():
+    html = DETAIL_FIXTURE.read_text(encoding="utf-8")
+    url = f"{BASE_URL}/47-2026-16"
+    tender = _parse_detail(html, url, "外国人研究者宿舎「二の宮ハウス」居住者管理システム等のWindows11対応に伴う更新　一式")
+
+    assert tender.source == "jst"
+    assert tender.url == url
+    assert tender.external_id == "47-2026-16"
+    assert tender.posted_date == date(2026, 7, 17)
+    # deadline should be the LAST 期限 (応募資料提出期限), not the first
+    assert tender.deadline == date(2026, 8, 6)
+    assert tender.description is None
+
+
+def test_parse_detail_no_dates_fields_are_none():
+    html = DETAIL_NO_DATES_FIXTURE.read_text(encoding="utf-8")
+    url = f"{BASE_URL}/22-2026-11"
+    tender = _parse_detail(html, url, "日付情報のない案件")
+
+    assert tender.posted_date is None
+    assert tender.deadline is None
+    assert tender.title == "日付情報のない案件"
+
+
+# ---------------------------------------------------------------------------
+# fetch_recent — full pipeline (listing + N detail fetches), mocked HTTP
+# ---------------------------------------------------------------------------
+
+
+@respx.mock
+def test_fetch_recent_returns_tenders():
+    listing_html = LISTING_FIXTURE.read_text(encoding="utf-8")
+    detail_html = DETAIL_FIXTURE.read_text(encoding="utf-8")
+
+    respx.get(BASE_URL + LISTING_PATH).mock(
+        return_value=httpx.Response(200, text=listing_html)
+    )
+    respx.get(url__regex=rf"{BASE_URL}/\d+-\d+-\d+").mock(
+        return_value=httpx.Response(200, text=detail_html)
+    )
+
+    tenders = fetch_recent()
     assert len(tenders) == 3
-
-
-def test_parse_feed_counts_bytes(fixture_bytes):
-    tenders = _parse_feed(fixture_bytes)
-    assert len(tenders) == 3
-
-
-def test_parse_feed_source(fixture_xml):
-    tenders = _parse_feed(fixture_xml)
     assert all(t.source == "jst" for t in tenders)
 
 
-def test_parse_feed_titles_not_empty(fixture_xml):
-    tenders = _parse_feed(fixture_xml)
-    for t in tenders:
-        assert t.title.strip() != ""
-
-
-def test_parse_feed_urls_are_https(fixture_xml):
-    tenders = _parse_feed(fixture_xml)
-    for t in tenders:
-        assert t.url.startswith("https://")
-
-
-def test_parse_feed_has_posted_date(fixture_xml):
-    tenders = _parse_feed(fixture_xml)
-    # All 3 fixture items have pubDate
-    assert all(t.posted_date is not None for t in tenders)
-
-
-def test_parse_feed_smr_found(fixture_xml):
-    tenders = _parse_feed(fixture_xml)
-    titles = [t.title for t in tenders]
-    assert any("SMR" in title for title in titles)
-
-
-def test_parse_feed_empty_xml():
-    tenders = _parse_feed("<rss version='2.0'><channel></channel></rss>")
-    assert tenders == []
-
-
-# ---------------------------------------------------------------------------
-# bozo feed — body sample appears in warning log
-# ---------------------------------------------------------------------------
-
-
-def test_parse_feed_bozo_logs_body_sample_bytes(caplog):
-    """When bozo=True and input is bytes, the log message must include body sample."""
-    import logging
-
-    # Truncated XML triggers bozo (unclosed token)
-    malformed = b"<?xml version='1.0'?><rss version='2.0'><channel><broken"
-    with caplog.at_level(logging.WARNING, logger="src.fetchers.jst"):
-        _parse_feed(malformed)
-
-    bozo_records = [r for r in caplog.records if "bozo" in r.message.lower()]
-    assert bozo_records, "Expected a bozo warning log record"
-    assert "body sample" in bozo_records[0].message
-
-
-def test_parse_feed_bozo_logs_body_sample_str(caplog):
-    """When bozo=True and input is str, the log message must include body sample."""
-    import logging
-
-    # Truncated XML triggers bozo (unclosed token)
-    malformed_str = "<?xml version='1.0'?><rss version='2.0'><channel><broken"
-    with caplog.at_level(logging.WARNING, logger="src.fetchers.jst"):
-        _parse_feed(malformed_str)
-
-    bozo_records = [r for r in caplog.records if "bozo" in r.message.lower()]
-    assert bozo_records, "Expected a bozo warning log record"
-    assert "body sample" in bozo_records[0].message
-
-
-def test_parse_feed_missing_link_skipped():
-    xml = """<?xml version="1.0" encoding="UTF-8"?>
-    <rss version="2.0"><channel>
-      <item><title>タイトルのみ</title></item>
-    </channel></rss>"""
-    tenders = _parse_feed(xml)
-    assert tenders == []
-
-
-def test_parse_feed_missing_title_skipped():
-    xml = """<?xml version="1.0" encoding="UTF-8"?>
-    <rss version="2.0"><channel>
-      <item><link>https://choutatsu.jst.go.jp/bid/999</link></item>
-    </channel></rss>"""
-    tenders = _parse_feed(xml)
-    assert tenders == []
-
-
-def test_parse_feed_external_link_skipped():
-    """Links pointing outside ALLOWED_HOST must be dropped."""
-    xml = """<?xml version="1.0" encoding="UTF-8"?>
-    <rss version="2.0"><channel>
-      <item>
-        <title>外部リンク案件</title>
-        <link>https://evil.example.com/page</link>
-        <pubDate>Mon, 01 Apr 2024 09:00:00 +0900</pubDate>
-      </item>
-    </channel></rss>"""
-    tenders = _parse_feed(xml)
-    assert tenders == []
-
-
-def test_parse_feed_http_link_skipped():
-    """HTTP (non-HTTPS) links in RSS entries must be dropped."""
-    xml = """<?xml version="1.0" encoding="UTF-8"?>
-    <rss version="2.0"><channel>
-      <item>
-        <title>HTTP案件</title>
-        <link>http://choutatsu.jst.go.jp/bid/999</link>
-        <pubDate>Mon, 01 Apr 2024 09:00:00 +0900</pubDate>
-      </item>
-    </channel></rss>"""
-    tenders = _parse_feed(xml)
-    assert tenders == []
-
-
-# ---------------------------------------------------------------------------
-# fetch_recent — disabled fetcher (RSS URL under re-investigation)
-# ---------------------------------------------------------------------------
-
-
-def test_fetch_recent_returns_empty_list():
-    """fetch_recent returns [] while the JST RSS URL is under re-investigation."""
-    tenders = fetch_recent()
-    assert tenders == []
-
-
-def test_fetch_recent_emits_warning(caplog):
-    """fetch_recent must emit a WARNING log when it is disabled."""
-    import logging
-
-    with caplog.at_level(logging.WARNING, logger="src.fetchers.jst"):
-        fetch_recent()
-
-    assert any(
-        "無効化" in r.message for r in caplog.records
-    ), "Expected a warning log containing '無効化'"
-
-
-# The tests below exercise the HTTP/retry behaviour of the old live fetcher.
-# They are skipped until the real RSS URL is identified and the fetcher is re-enabled.
-
-
-@pytest.mark.skip(reason="JST フェッチャーは RSS URL 再調査までの間、無効化済み")
 @respx.mock
-def test_fetch_recent_returns_tenders():
-    fixture_bytes = FIXTURE_PATH.read_bytes()
-    respx.get(RSS_URL).mock(return_value=httpx.Response(200, content=fixture_bytes))
+def test_fetch_recent_skips_failed_detail_page():
+    """One detail page failing (e.g. 500 after retries) must not abort the run."""
+    listing_html = LISTING_FIXTURE.read_text(encoding="utf-8")
+    detail_html = DETAIL_FIXTURE.read_text(encoding="utf-8")
+
+    respx.get(BASE_URL + LISTING_PATH).mock(
+        return_value=httpx.Response(200, text=listing_html)
+    )
+    respx.get(f"{BASE_URL}/47-2026-16").mock(return_value=httpx.Response(500))
+    respx.get(f"{BASE_URL}/47-2026-17").mock(
+        return_value=httpx.Response(200, text=detail_html)
+    )
+    respx.get(f"{BASE_URL}/46-2026-81").mock(
+        return_value=httpx.Response(200, text=detail_html)
+    )
+
     tenders = fetch_recent()
-    assert len(tenders) == 3
+    # 3 listing items, 1 fails after retries -> 2 succeed
+    assert len(tenders) == 2
 
 
-@pytest.mark.skip(reason="JST フェッチャーは RSS URL 再調査までの間、無効化済み")
 @respx.mock
-def test_fetch_recent_4xx_raises():
-    respx.get(RSS_URL).mock(return_value=httpx.Response(404))
+def test_fetch_recent_listing_4xx_raises():
+    respx.get(BASE_URL + LISTING_PATH).mock(return_value=httpx.Response(404))
     with pytest.raises(Exception):
         fetch_recent()
 
 
-@pytest.mark.skip(reason="JST フェッチャーは RSS URL 再調査までの間、無効化済み")
 @respx.mock
-def test_fetch_recent_5xx_raises_after_retries():
-    respx.get(RSS_URL).mock(return_value=httpx.Response(500))
+def test_fetch_recent_listing_5xx_raises_after_retries():
+    respx.get(BASE_URL + LISTING_PATH).mock(return_value=httpx.Response(500))
     with pytest.raises(Exception):
         fetch_recent()
+
+
+@respx.mock
+def test_fetch_recent_empty_listing_returns_empty_list():
+    respx.get(BASE_URL + LISTING_PATH).mock(
+        return_value=httpx.Response(200, text="<html><body></body></html>")
+    )
+    tenders = fetch_recent()
+    assert tenders == []

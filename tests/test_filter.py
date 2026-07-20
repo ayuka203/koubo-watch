@@ -14,6 +14,7 @@ from src.filter import (
     flatten_keyword_hits,
     is_excluded,
     load_keywords,
+    pre_label_tender_type,
 )
 
 # ---------------------------------------------------------------------------
@@ -223,6 +224,15 @@ def test_classify_exclude_key_ignored(keywords):
     assert "exclude" not in result
 
 
+def test_classify_tender_type_hints_key_ignored(keywords):
+    """The 'tender_type_hints' key must not be treated as a classify() category
+    (regression: '調達' is a commissioned hint keyword, but must not make
+    unrelated tenders match a bogus 'tender_type_hints' category)."""
+    result = classify("一般事務用品の調達について", "ボールペン、コピー用紙", keywords)
+    assert "tender_type_hints" not in result
+    assert result == {}
+
+
 def test_classify_result_is_sorted(keywords):
     """Sub-category lists should be consistently sorted."""
     result = classify(
@@ -333,3 +343,55 @@ def test_classify_electricity_business(keywords):
     result = classify("電気事業に関する制度調査", None, keywords)
     assert "送配電" in result
     assert "系統運用・市場" in result["送配電"]
+
+
+# ---------------------------------------------------------------------------
+# pre_label_tender_type
+# ---------------------------------------------------------------------------
+
+
+def test_pre_label_subsidy_signal(keywords):
+    result = pre_label_tender_type("再エネ導入支援補助金の交付決定について", None, keywords)
+    assert result == "subsidy"
+
+
+def test_pre_label_commissioned_signal(keywords):
+    result = pre_label_tender_type("系統安定化技術の調査委託業務", None, keywords)
+    assert result == "commissioned"
+
+
+def test_pre_label_no_signal_returns_unknown(keywords):
+    result = pre_label_tender_type("廃炉技術に関する研究開発", None, keywords)
+    assert result == "unknown"
+
+
+def test_pre_label_signal_in_description(keywords):
+    """description 側のシグナルも判定に使われる。"""
+    result = pre_label_tender_type("案件名", "本業務は入札により発注する", keywords)
+    assert result == "commissioned"
+
+
+def test_pre_label_both_signals_fallback_unknown(keywords):
+    """subsidy/commissioned 両方に一致した場合は unknown にフォールバックする
+    （優先順位を決め打ちで確定させるより、AI 判定に委ねる方が安全）。"""
+    result = pre_label_tender_type("助成金交付と業務委託を組み合わせた事業", None, keywords)
+    assert result == "unknown"
+
+
+def test_pre_label_empty_title_and_description(keywords):
+    assert pre_label_tender_type("", None, keywords) == "unknown"
+
+
+def test_pre_label_missing_hints_key_returns_unknown():
+    """tender_type_hints キーが無い keywords dict でも例外にならず unknown を返す。"""
+    result = pre_label_tender_type("補助金交付決定", None, {"exclude": []})
+    assert result == "unknown"
+
+
+def test_pre_label_case_and_nfc_insensitive(keywords):
+    """大文字小文字・NFC正規化の違いを吸収する。"""
+    import unicodedata
+
+    nfd_title = unicodedata.normalize("NFD", "業務委託の入札公告")
+    result = pre_label_tender_type(nfd_title, None, keywords)
+    assert result == "commissioned"

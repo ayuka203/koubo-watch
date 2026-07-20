@@ -4,8 +4,10 @@
 
 ## 第 1 段階（本リポ）
 
-- データ取得（Jグランツ API / NEDO HTML / JST RSS / 文科省 RSS）
+- データ取得（NEDO HTML / JST HTML / 文科省 RSS。Jグランツ API は補助金専用のため無効化中 — 2026-07-20 Fable裁定）
 - キーワードカテゴリ分類（原子力・放射線・送配電）
+- tender_type 判定（commissioned=受注型 / subsidy=助成型 / unknown）。事前ラベリング
+  （キーワード）+ AI 判定の多段防御で、助成金案件（subsidy）を表示対象から除外する
 - SQLite DB 保存（SQLAlchemy 2.0 ORM）
 
 ## 設計資産: Anthropic 構造化出力パターンの正典
@@ -43,15 +45,18 @@ python -m pytest tests/ -v
 koubo-watch/
 ├── src/
 │   ├── fetchers/
-│   │   ├── jgrants.py   — Jグランツ API クライアント
+│   │   ├── jgrants.py   — Jグランツ API クライアント（無効化中。fetch_recent() は常に空リストを返す）
 │   │   ├── nedo.py      — NEDO HTML スクレイパー
-│   │   ├── jst.py       — JST RSS パーサー
+│   │   ├── jst.py       — JST 調達情報 HTML スクレイパー（旧 RSS は廃止済み）
 │   │   └── mext.py      — 文科省 RSS パーサー
-│   ├── filter.py        — キーワードカテゴリ分類
-│   ├── db.py            — SQLite ORM
+│   ├── filter.py        — キーワードカテゴリ分類 + tender_type 事前ラベリング
+│   ├── classifier.py    — AI 判定（エネルギーシステム関連度スコア + tender_type確定）
+│   ├── db.py            — SQLite ORM（tender_type 列のマイグレーションを含む）
 │   └── models.py        — Pydantic スキーマ
+├── scripts/
+│   └── reclassify_tender_type.py  — 既存 DB の tender_type 再分類（一回限りの移行用）
 ├── config/
-│   └── keywords.json    — 分類キーワード辞書
+│   └── keywords.json    — 分類キーワード辞書（tender_type_hints を含む）
 ├── tests/
 │   └── fixtures/        — オフラインテスト用サンプルデータ
 └── data/

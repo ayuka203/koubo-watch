@@ -141,6 +141,11 @@ class TenderORM(Base):
     ai_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_research: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
+    # "commissioned" | "subsidy" | "unknown" — see src/models.py:Tender.tender_type
+    tender_type: Mapped[str | None] = mapped_column(
+        String(32), nullable=True, default="unknown"
+    )
+
 
 # ---------------------------------------------------------------------------
 # Database initialisation
@@ -148,9 +153,29 @@ class TenderORM(Base):
 
 
 def init_db() -> None:
-    """Create all tables if they do not already exist."""
+    """Create all tables if they do not already exist, then run migrations."""
     engine = get_engine()
     Base.metadata.create_all(engine)
+    migrate_add_tender_type()
+
+
+def migrate_add_tender_type() -> None:
+    """既存 DB の tenders テーブルに tender_type カラムを追加する（冪等）。
+
+    ``Base.metadata.create_all()`` は既存テーブルへの列追加を行わないため、
+    このマイグレーションを別途実行する必要がある。``PRAGMA table_info`` で
+    カラムの存在を確認してから ``ALTER TABLE`` を実行するので、複数回呼んでも
+    エラーにならず、状態は変化しない。
+    """
+    engine = get_engine()
+    with engine.connect() as conn:
+        result = conn.execute(text("PRAGMA table_info(tenders)"))
+        columns = {row[1] for row in result}  # row[1] == column name
+        if "tender_type" not in columns:
+            conn.execute(
+                text("ALTER TABLE tenders ADD COLUMN tender_type TEXT DEFAULT 'unknown'")
+            )
+            conn.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -162,17 +187,28 @@ def upsert_tender(
     session: Session,
     tender_in: TenderSchema,
     categories: dict[str, list[str]],
+    tender_type: str | None = None,
 ) -> TenderORM:
     """Insert a new tender or update an existing one (matched by URL).
 
     ``categories`` is the output of ``filter.classify()``, mapping top-level
     category name to a list of matched sub-categories.
 
+    ``tender_type`` lets the caller override ``tender_in.tender_type`` (e.g.
+    to pass the confirmed AI judgement). If omitted, ``tender_in.tender_type``
+    is used. On update, a confirmed value ("commissioned"/"subsidy") always
+    wins; "unknown" never downgrades an already-confirmed row — this lets a
+    later AI classification persist even if a subsequent daily fetch/pre-label
+    pass would otherwise recompute "unknown" for the same tender.
+
     Returns the ORM instance (either new or updated).
     """
     import json
 
     now = datetime.now(tz=timezone.utc)
+    effective_tender_type = (
+        tender_type if tender_type is not None else tender_in.tender_type
+    )
 
     # Derive boolean category flags
     category_nuclear = "原子力" in categories
@@ -198,6 +234,10 @@ def upsert_tender(
         existing.category_radiation = category_radiation
         existing.category_grid = category_grid
         existing.keyword_hits = keyword_hits_json
+        if effective_tender_type not in (None, "unknown"):
+            existing.tender_type = effective_tender_type
+        elif existing.tender_type is None:
+            existing.tender_type = effective_tender_type or "unknown"
         return existing
 
     new_row = TenderORM(
@@ -214,6 +254,7 @@ def upsert_tender(
         category_radiation=category_radiation,
         category_grid=category_grid,
         keyword_hits=keyword_hits_json,
+        tender_type=effective_tender_type or "unknown",
     )
     session.add(new_row)
     session.flush()  # make row visible to subsequent queries in the same session

@@ -16,6 +16,7 @@ import re
 import unicodedata
 from functools import lru_cache
 from string import Template
+from typing import Literal
 import os
 
 import anthropic
@@ -71,6 +72,7 @@ class TenderAssessment(BaseModel):
     energy_system_score: int = Field(ge=0, le=10)
     reason: str = Field(max_length=200)  # 80字想定、200字を Hard limit
     is_research: bool
+    tender_type: Literal["commissioned", "subsidy", "unknown"]
 
 
 # ---------------------------------------------------------------------------
@@ -169,6 +171,13 @@ _CLASSIFY_PROMPT_TEMPLATE = Template(
 - 0-3: 改善とは無関係
 is_research: R&D/実証/調査系なら true
 reason: 判定の短い根拠（80字以内）
+
+tender_type: 以下の定義に従い、受注型/助成型を判定してください。
+- commissioned: 発注者（官公庁・独法）から対価を得て業務を実施する受注型
+  （委託・調達・請負・実証事業の公募）
+- subsidy: 申請者自身の事業に資金が交付される助成型
+- unknown: 判定に確信が持てない場合。無理に確定しないこと。
+
 応答は JSON のみ、前置きや説明文・コードフェンスは付けない。
 
 ---
@@ -239,10 +248,22 @@ def classify_tender(title: str, description: str | None) -> TenderAssessment:
     try:
         assessment = TenderAssessment.model_validate(tool_use.input)
     except ValidationError as exc:
-        preview = str(tool_use.input)[:200]
-        logger.debug("full tool_use.input: %s", tool_use.input)
-        raise RuntimeError(
-            f"Claude API 応答の検証に失敗しました: {exc}\n--- preview ---\n{preview}"
-        ) from exc
+        # tender_type だけが欠落/不正なケースは、他フィールド（スコア等）が
+        # 有効なら "unknown" にフォールバックして救済する。tender_type 以外の
+        # フィールドが不正な場合はそのまま失敗させる（従来通り）。
+        patched_input = dict(tool_use.input) if isinstance(tool_use.input, dict) else {}
+        patched_input["tender_type"] = "unknown"
+        try:
+            assessment = TenderAssessment.model_validate(patched_input)
+        except ValidationError:
+            preview = str(tool_use.input)[:200]
+            logger.debug("full tool_use.input: %s", tool_use.input)
+            raise RuntimeError(
+                f"Claude API 応答の検証に失敗しました: {exc}\n--- preview ---\n{preview}"
+            ) from exc
+        logger.warning(
+            "tender_type の検証に失敗したため 'unknown' にフォールバックしました: %s",
+            exc,
+        )
 
     return assessment

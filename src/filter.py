@@ -75,7 +75,8 @@ def classify(
 
     ``keywords`` is the full dict loaded by :func:`load_keywords`.  The
     special ``"exclude"`` key is ignored here (callers should check
-    :func:`is_excluded` separately).
+    :func:`is_excluded` separately), as is ``"tender_type_hints"`` (consumed
+    separately by :func:`pre_label_tender_type`).
 
     Returns a dict like::
 
@@ -91,7 +92,7 @@ def classify(
     result: dict[str, list[str]] = {}
 
     for category, sub_dict in keywords.items():
-        if category == "exclude":
+        if category in ("exclude", "tender_type_hints"):
             continue
         if not isinstance(sub_dict, dict):
             # Unexpected structure — skip gracefully
@@ -111,6 +112,54 @@ def classify(
             result[category] = sorted(matched_subs)
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# tender_type pre-labelling
+# ---------------------------------------------------------------------------
+
+
+def pre_label_tender_type(
+    title: str,
+    description: str | None,
+    keywords: dict,
+) -> str:
+    """タイトル・説明文から tender_type ("commissioned"/"subsidy") を仮判定する。
+
+    ``keywords`` の ``tender_type_hints`` キー(``{"subsidy": [...], "commissioned": [...]}``)
+    を参照し、NFC正規化・小文字化した上で部分一致を見る。
+
+    優先順位: subsidy・commissioned 両方のシグナルに一致した場合は、確度の低い
+    判定を確定させるより「保留」する方が安全なので "unknown" にフォールバック
+    する（誤って表示除外(subsidyと誤判定)したり、誤って表示対象にする副作用を
+    避けるため）。どちらにも一致しなければ "unknown" を返す。
+
+    Returns
+    -------
+    str
+        "subsidy" | "commissioned" | "unknown"
+    """
+    hints = keywords.get("tender_type_hints")
+    if not isinstance(hints, dict):
+        return "unknown"
+
+    combined = _normalize((title or "") + " " + (description or ""))
+
+    def _any_match(kw_list: object) -> bool:
+        if not isinstance(kw_list, list):
+            return False
+        return any(_normalize(kw) in combined for kw in kw_list)
+
+    is_subsidy = _any_match(hints.get("subsidy"))
+    is_commissioned = _any_match(hints.get("commissioned"))
+
+    if is_subsidy and is_commissioned:
+        return "unknown"
+    if is_subsidy:
+        return "subsidy"
+    if is_commissioned:
+        return "commissioned"
+    return "unknown"
 
 
 # ---------------------------------------------------------------------------
